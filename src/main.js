@@ -144,6 +144,7 @@ function render(){
   if(!ST.user)return renderAuth();
   if(ST.user&&ST.profile&&ST.profile.lang!==prefs.lang&&ST.ready)D.saveProfile({lang:prefs.lang});
   const v=nav.view;
+  if(prefs.pendingJoin&&["edit","gate","settings"].indexOf(v)<0)return renderJoin();
   if(v==="gate")return renderGate();
   if(v==="settings")return renderSettings();
   if(v==="edit")return renderEdit();
@@ -183,6 +184,7 @@ function renderAuth(){
   const up=authMode==="signup";
   app.innerHTML='<section class="stack welcome"><span class="logo">'+LOGO+'</span><h1>'+t("app")+'</h1><p>'+t("tag")+'</p></section>'+
    (D.kind==="demo"?'<p class="msg" style="text-align:center">'+t("demo_note")+'</p>':'')+
+   (prefs.pendingJoin?'<p class="chipline">'+t("join_login")+'</p>':'')+
    '<form class="card" id="authF" novalidate><h2>'+t(up?"signup":"signin")+'</h2>'+
    (up?'<label class="field"><span class="sec-t">'+t("your_name")+'</span><input id="aName" autocomplete="name" maxlength="40"></label>':'')+
    '<label class="field"><span class="sec-t">'+t("email")+'</span><input id="aEmail" type="email" autocomplete="email" dir="ltr" required></label>'+
@@ -554,17 +556,21 @@ function renderHalaqa(h){
    '<header class="bhead thead"><div class="bh-row"><div class="bh-name"><span>'+t("myhalaqas")+'</span><b>'+esc(h.name)+'</b></div><button class="codechip big" id="hCopy" dir="ltr" aria-label="'+t("copy")+'">'+esc(h.code)+'</button></div>'+
    '<div class="row"><svg width="74" height="74" viewBox="0 0 74 74" role="img" aria-label="'+t("done_n",dn,all.length)+'"><circle cx="37" cy="37" r="30" fill="none" stroke="#0a3b33" stroke-width="8"/><circle cx="37" cy="37" r="30" fill="none" stroke="#d4a23a" stroke-width="8" stroke-dasharray="'+(C*frac).toFixed(1)+' '+C.toFixed(1)+'" stroke-linecap="round" transform="rotate(-90 37 37)"/><text x="37" y="42" text-anchor="middle" font-size="16" font-weight="700" fill="#fbf8f1">'+dn+'/'+all.length+'</text></svg>'+
    '<div class="col"><b>'+t("done_n",dn,all.length)+'</b><span class="hint lt">'+(P.summaryAt?t("summary_at_hint",P.summaryAt):t("summary_off"))+'</span><span class="msg ok lt" id="hCMsg"></span></div></div></header>'+
-   '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn accent" id="hRepB">'+t("week_report")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
+   '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn primary" id="hInv">'+t("invite")+'</button><button class="btn accent" id="hRepB">'+t("week_report")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
    '<div class="weeknav"><button class="btn" id="dPrev">'+t("prev")+'</button><span class="lbl">'+DAYS[L()][parse(date).getDay()]+'<b>'+nice(date)+'</b></span><button class="btn" id="dNext">'+t("next")+'</button></div>'+
    (date===td?'':'<button class="btn accent" id="dNow" style="align-self:center">'+t("today")+'</button>')+
    (oneW?'<section class="card"><div class="row between"><h2>'+t("today_wird")+'</h2><span class="hint">'+amt(oneW)+'</span></div><div class="items">'+oneW.map(it=>'<span class="item">'+itemLabel(it)+'</span>').join("")+'</div></section>':'')+
    '<section class="card"><div class="row between"><h2>'+t("students")+'</h2><div class="seg" id="hFil"><button data-v="all" aria-pressed="'+(hFilter==="all")+'">'+t("filter_all")+'</button><button data-v="not" aria-pressed="'+(hFilter==="not")+'">'+t("filter_not",notN)+'</button></div></div>'+
    (all.length?'<ul class="list srows">'+st.map(k=>{const r=day(k,date)||{},hs=+(r.stars||0),ok=hs>0;
      return '<li class="srow"><div class="sname"><span class="art s">'+avatar(k.look||0,k.skin==null?1:k.skin,{head:true})+'</span><span class="t"><button class="linkbtn" data-open="'+k.id+'">'+esc(k.name)+'</button><span class="hint '+(ok?"okc":"badc")+'">'+(ok?'✓ '+t("home_done")+' '+starsRO(hs):'✗ '+t("home_not"))+'</span>'+(!oneW&&wmap[k.id].length?'<span class="hint">'+t("wird_lbl")+': '+wtxt(wmap[k.id])+'</span>':'')+'</span></div>'+
-       '<div class="sact">'+starRow("t mini",t("tstars")).replace('class="stars','data-k="'+k.id+'" class="stars')+(!ok&&date===td?'<button class="btn small primary" data-rem="'+k.id+'"'+(reminded[k.id+date]?' disabled':'')+'>'+(reminded[k.id+date]?t("reminded"):t("remind"))+'</button>':'')+'</div></li>'}).join("")+'</ul>':'<p class="empty">'+t("no_students")+'</p>')+'</section>'+
+       '<div class="sact">'+starRow("t mini",t("tstars")).replace('class="stars','data-k="'+k.id+'" class="stars')+(!ok&&date===td?'<button class="btn small primary" data-rem="'+k.id+'"'+(reminded[k.id+date]?' disabled':'')+'>'+(reminded[k.id+date]?t("reminded"):t("remind"))+'</button>':'')+'<button class="btn small" data-rm="'+k.id+'">'+t("remove_st")+'</button></div></li>'}).join("")+'</ul>':'<p class="empty">'+t("no_students")+'</p>')+'</section>'+
    (all.length?'<section class="card"><h3>'+t("top_mistakes")+'</h3>'+(top.length?'<div class="items">'+top.map(([n,c])=>'<span class="item weak">'+esc(sName(+n))+'<small>'+c+'</small></span>').join("")+'</div>':'<p class="empty">'+t("no_mistakes")+'</p>')+'</section>':'')+demoNote();
   bindTop();
   $("hBack").onclick=()=>go("main");$("hSet").onclick=()=>openHEdit(h.id);$("hRepB").onclick=()=>go("hreport",{hid:h.id});
+  $("hInv").onclick=()=>{const url=location.origin+location.pathname.replace(/[^/]*$/,"")+"?join="+encodeURIComponent(h.code),txt=t("invite_txt",h.name,h.code);
+    if(navigator.share)navigator.share({title:t("app"),text:txt,url}).catch(()=>{});else copyText(txt+"\n"+url,$("hCMsg"))};
+  app.querySelectorAll("[data-rm]").forEach(b=>{let armed=false;b.onclick=async()=>{if(!armed){armed=true;b.className="btn small warn";b.textContent=t("rm_confirm");return}
+    b.disabled=true;await D.removeStudent(b.dataset.rm);delete (ST.students[h.id]||{})[b.dataset.rm];render()}});
   $("hCopy").onclick=()=>copyText(h.code,$("hCMsg"));
   $("hFil").querySelectorAll("button").forEach(b=>b.onclick=()=>{hFilter=b.dataset.v;render()});
   $("dPrev").onclick=()=>{hDate=addDays(date,-1);render()};$("dNext").onclick=()=>{hDate=addDays(date,1);render()};
@@ -669,11 +675,12 @@ function renderEdit(){
    (modeOf(d)!=="kids"?'<section class="card"><h3>'+t("profile_theme")+'</h3>'+paletteGrid("ePal",d.palette||"",true)+'</section>':'')+
    (modeOf(d)==="kids"?'<section class="card"><h3>'+t(d.gender==="f"?"theme_f":"theme")+'</h3><div class="themes" id="eThemes">'+THEME_ORDER.map(th=>'<button type="button" class="th" data-th="'+th+'" aria-pressed="'+(th===d.theme)+'">'+THEMES[th].art+'<span>'+THEMES[th][L()]+'</span></button>').join("")+'</div></section>':'')+
    '<section class="card"><h3>'+t("halaqa")+'</h3>'+(h?'<p class="about">'+t("joined",esc(h.name))+(h.teacherName?' · '+t("teacher_of",esc(h.teacherName)):'')+'</p><p class="about">'+(tp?t("plan_by_teacher",esc(h.name)):t("plan_by_parent"))+'</p><button type="button" class="btn" id="hLeave" style="align-self:flex-start">'+t("leave")+'</button>':
-     '<div class="row"><input id="hCodeIn" class="codein" dir="ltr" maxlength="8" placeholder="'+t("halaqa_code")+'" autocomplete="off"><button type="button" class="btn primary" id="hJoin">'+t("join")+'</button></div>')+'<p class="msg" id="hMsg"></p></section>'+
+     '<div class="row"><input id="hCodeIn" class="codein" dir="ltr" maxlength="8" placeholder="'+t("halaqa_code")+'" autocomplete="off" value="'+esc(d._code||"")+'"><button type="button" class="btn primary" id="hJoin">'+t("join")+'</button></div>')+'<p class="msg" id="hMsg"></p></section>'+
    (tp?'':planSection(d))+
    (d._new?'':'<section class="card"><h3>'+t("childdev")+'</h3><p class="about">'+t("childdev_t")+'</p><button type="button" class="btn" id="cdSet" style="align-self:flex-start">'+t("childdev_set",esc(d.name))+'</button></section>')+
    '<p class="msg err" id="eMsg"></p><div class="row"><button class="btn primary big" id="eSave">'+t("save")+'</button><button class="btn big" id="eCancel">'+t("cancel")+'</button>'+(d._new?'':'<button class="btn big" id="eDel" style="margin-inline-start:auto">'+t("del")+'</button>')+'</div>';
   $("eName").oninput=e=>{d.name=e.target.value};
+  if($("hCodeIn"))$("hCodeIn").oninput=e=>{d._code=e.target.value};
   $("eGender").querySelectorAll("button").forEach(b=>b.onclick=()=>{d.gender=b.dataset.v;renderEdit()});
   if($("eThemes"))$("eThemes").querySelectorAll(".th").forEach(b=>b.onclick=()=>{d.theme=b.dataset.th;$("eThemes").querySelectorAll(".th").forEach(x=>x.setAttribute("aria-pressed",String(x===b)))});
   $("eAge").onchange=e=>{const v=e.target.value.trim();d.age=v===""?"":Math.max(3,Math.min(99,Math.round(+v)||0));renderEdit()};
@@ -739,6 +746,28 @@ function renderHEdit(){
   let armed=false;if($("eDel"))$("eDel").onclick=async()=>{if(!armed){armed=true;$("eDel").className="btn warn big";$("eDel").textContent=t("del2");return}await D.deleteHalaqa(d.id);draft=null;go("main")};
 }
 
+
+
+/* ================= invite link: ?join=CODE ================= */
+let joinInfo=null;
+function renderJoin(){
+  applyTheme(null);const code=prefs.pendingJoin;
+  const done=()=>{prefs.pendingJoin=null;savePrefs();joinInfo=null};
+  if(!joinInfo||joinInfo.code!==code){joinInfo={code,loading:true};D.findHalaqa(code).then(h=>{joinInfo={code,h:h||null};render()},()=>{joinInfo={code,h:null};render()})}
+  const h=joinInfo.h,ks=kidsList();
+  app.innerHTML=topbar()+'<section class="stack welcome"><span class="logo">'+LOGO+'</span><h1>'+t("invite_t")+'</h1>'+
+   (joinInfo.loading?'<p>'+t("loading")+'</p>':h?'<p><b>«'+esc(h.name)+'»</b>'+(h.teacherName?' · '+t("teacher_of",esc(h.teacherName)):'')+'</p>':'<p>'+t("notfound")+' <b dir="ltr">'+esc(code)+'</b></p>')+'</section>'+
+   (h?'<section class="card"><h2>'+t("join_who")+'</h2>'+(ks.length?ks.map(k=>'<div class="kidrow"><span class="t"><b>'+esc(k.name)+'</b>'+(k.halaqaId===h.id?'<small>'+t("already_in")+'</small>':k.halaqaId?'<small>'+t("will_move")+'</small>':'')+'</span>'+(k.halaqaId===h.id?'':'<button class="btn accent" data-jk="'+k.id+'">'+t("join")+'</button>')+'</div>').join(""):'')+
+     '<div class="row"><button class="btn accent" id="jNew">+ '+t("for_child")+'</button><button class="btn accent" id="jSelf">+ '+t("for_me")+'</button></div><p class="msg" id="jMsg"></p></section>':'')+
+   '<button class="btn" id="jCancel" style="align-self:center">'+t("cancel")+'</button>';
+  bindTop();
+  $("jCancel").onclick=()=>{done();go("main")};
+  if(!h)return;
+  const newKid=self=>{done();openEdit(null,self);draft._code=code;renderEdit()};
+  $("jNew").onclick=()=>newKid(false);$("jSelf").onclick=()=>newKid(true);
+  app.querySelectorAll("[data-jk]").forEach(b=>b.onclick=async()=>{b.disabled=true;try{const r=await D.joinHalaqa(b.dataset.jk,code);if(r&&r.err){$("jMsg").className="msg err";$("jMsg").textContent=t("notfound");b.disabled=false;return}
+    prefs.cur=b.dataset.jk;prefs.mode="kids";done();go("main")}catch(e){$("jMsg").className="msg err";$("jMsg").textContent=t("err_generic");b.disabled=false}});
+}
 
 /* ================= weekly report + PDF export ================= */
 function repData(k,w){
@@ -853,6 +882,7 @@ function stopListen(close){
 
 /* open from a notification link: ?report=1 (parent, last week) or ?hreport=<halaqaId> (teacher) */
 (()=>{const q=new URLSearchParams(location.search);
+  if(q.get("join")){prefs.pendingJoin=String(q.get("join")).trim().toUpperCase().slice(0,8);savePrefs();history.replaceState(null,"",location.pathname)}
   if(q.get("report")){nav={view:"report",w:"prev"}}
   else if(q.get("hreport")){prefs.mode="teach";nav={view:"hreport",hid:q.get("hreport"),w:"prev"}}
   if(q.get("report")||q.get("hreport"))history.replaceState(null,"",location.pathname);
