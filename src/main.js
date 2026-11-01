@@ -117,16 +117,21 @@ function render(){
   if(v==="settings")return renderSettings();
   if(v==="edit")return renderEdit();
   if(v==="hedit")return renderHEdit();
-  if(childKid()){const k=childKid();return v==="hist"?renderHist(k,{}):renderKid(k)}
+  if(childKid()){const k=childKid();return v==="hist"?renderHist(k,{}):v==="report"?renderReport(k,{}):v==="record"?renderRecord(k,{}):renderKid(k)}
   if(prefs.mode==="teach"&&halaqaList().length){
     if(v==="halaqa"&&ST.halaqas[nav.hid])return renderHalaqa(ST.halaqas[nav.hid]);
     if(v==="student"){const k=(ST.students[nav.hid]||{})[nav.kid];if(k)return renderStudent(k,ST.halaqas[nav.hid]);}
     if(v==="shist"){const k=(ST.students[nav.hid]||{})[nav.kid];if(k)return renderHist(k,{teacher:true,hid:nav.hid});}
+    if(v==="hreport"&&ST.halaqas[nav.hid])return renderHReport(ST.halaqas[nav.hid]);
+    if(v==="sreport"){const k=(ST.students[nav.hid]||{})[nav.kid];if(k)return renderReport(k,{teacher:true,hid:nav.hid});}
+    if(v==="srecord"){const k=(ST.students[nav.hid]||{})[nav.kid];if(k)return renderRecord(k,{teacher:true,hid:nav.hid});}
     return renderTeachHome();
   }
   const k=curKid();
   if(!k)return renderWelcome();
   if(v==="hist")return renderHist(k,{});
+  if(v==="report")return renderReport(k,{});
+  if(v==="record")return renderRecord(k,{});
   return renderKid(k);
 }
 function renderKid(k){const m=modeOf(k);return m==="adults"?renderAdult(k):m==="teens"?renderTeen(k):renderKids(k)}
@@ -236,6 +241,7 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   if(!items.length)list='<p class="empty">'+t("no_review")+'</p>';
   else if(variant==="adults")list='<div class="rows">'+items.map(it=>{const lv=A.lv[it[0]],str=lv&&lv.n?t("strength")+' '+lv.avg.toFixed(1):t("nolv");return '<button class="item row'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'"><span class="q">'+itemLabel(it)+'</span><span class="m">'+(it[2]-it[1]+1)+' '+t("ayah")+' · '+str+'</span></button>'}).join("")+'</div><span class="hint">'+t("tap_weak_self")+'</span>';
   else list='<div class="items">'+items.map(it=>'<button class="item'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'">'+itemLabel(it)+'</button>').join("")+'</div><span class="hint">'+(teacherMode?t("tweak"):variant==="teens"||k.self?t("tap_weak_self"):t(k.gender==="f"?"tap_weak_f":"tap_weak"))+'</span>';
+  if(items.length)list+='<button class="btn small listen" data-listen>'+ICONS.play+t("listen")+'</button>';
   let html=head+(variant==="week"?'<div class="field"><div class="sec-t"><span>'+t("review")+'</span><span>'+(items.length?itemAyat(items)+' '+t("ayah"):'')+'</span></div>'+list+'</div>':list);
   const extras='<label class="field"><span class="sec-t">'+t("extra")+'</span><input data-f="extra" id="ex-'+date+'" autocomplete="off" placeholder="'+t("extra_ph")+'"></label>'+
       '<div class="field"><span class="sec-t">'+t("newm")+'</span><div class="newrow"><select class="sel" data-f="nS" id="ns-'+date+'" aria-label="'+t("new_surah")+'">'+surahOptions(+r.nS||0)+'</select><input data-f="nF" id="nf-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input data-f="nT" id="nt-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div></div>'+
@@ -255,6 +261,7 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   el.innerHTML=html;
   el.querySelectorAll("input[data-f],textarea[data-f]").forEach(inp=>{inp.value=r[inp.dataset.f]||"";let tm;inp.addEventListener("input",()=>{clearTimeout(tm);tm=setTimeout(()=>{let v=inp.value;if(inp.type==="number"){const n=+el.querySelector("[data-f=nS]").value;v=v===""?"":Math.max(1,Math.min(n?S[n-1][2]:286,Math.round(+v)||1));}setField(k,date,{[inp.dataset.f]:v})},500)})});
   const sel=el.querySelector("select[data-f]");if(sel)sel.addEventListener("change",e=>{const v=+e.target.value||"";setField(k,date,{nS:v});if(v)el.querySelectorAll("input[type=number]").forEach(x=>x.max=S[v-1][2])});
+  const lb=el.querySelector("[data-listen]");if(lb)lb.onclick=()=>openListen(items);
   el.querySelectorAll(".item").forEach(b=>b.onclick=()=>{const rr=day(k,date)||{},arr=(rr[weakKey]||[]).slice(),n=+b.dataset.s,ix=arr.indexOf(n);if(ix>-1)arr.splice(ix,1);else arr.push(n);setField(k,date,{[weakKey]:arr});b.classList.toggle("weak",ix<0);b.setAttribute("aria-pressed",String(ix<0))});
   const sKey=teacherMode?"tStars":"stars",row=el.querySelector(".stars");
   row.querySelectorAll("button").forEach(b=>b.onclick=()=>{const cur=+((day(k,date)||{})[sKey]||0),n=+b.dataset.n,v=cur===n?0:n;setField(k,date,{[sKey]:v});paint(row,v);
@@ -302,6 +309,7 @@ const ICONS={
  book:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6c-2-1.6-5-2-8-1.6V19c3-.4 6 0 8 1.6 2-1.6 5-2 8-1.6V4.4C17 4 14 4.4 12 6z"/><path d="M12 6v14.6"/></svg>',
  user:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>',
  info:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>',
+ play:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>',
  phone:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>'
 };
 function bottomNav(active,third){
@@ -464,6 +472,7 @@ function renderHist(k,o){
   const weakest=ids.filter(n=>A.lv[n].level==="bad"||A.lv[n].level==="mid").sort((a,b)=>{const ra=A.lv[a].level==="bad"?0:1,rb=A.lv[b].level==="bad"?0:1;return ra-rb||A.lv[a].avg-A.lv[b].avg}).slice(0,5);
   const LV={good:t("good"),mid:t("mid"),bad:t("bad"),none:t("nolv")};
   app.innerHTML=topbar()+(o.teacher?'':tabs(k))+hero(k,t("back"))+
+   '<div class="row"><button class="btn accent" id="hRep">'+t("week_report")+'</button><button class="btn" id="hRec">'+t("export_rec")+'</button></div>'+
    '<section class="card"><h2>'+t("summary",esc(k.name))+'</h2><div class="kpis">'+
     '<div class="kpi"><b>'+A.perWeek.length+'</b><span>'+t("k_weeks")+'</span></div><div class="kpi"><b>'+A.total+'</b><span>'+t("k_total")+'</span></div><div class="kpi"><b>'+avg+'</b><span>'+t("k_avg")+'</span></div>'+
     '<div class="kpi"><b>'+rate+'%</b><span>'+t("k_rate",A.evald,A.elapsed)+'</span></div><div class="kpi"><b>'+A.best+'</b><span>'+t("k_streak")+'</span></div><div class="kpi"><b>'+cnt.good+'</b><span>'+t("k_good",ids.length)+'</span></div></div></section>'+
@@ -476,6 +485,8 @@ function renderHist(k,o){
   bindTop();
   const back=()=>o.teacher?go("student",{hid:o.hid,kid:k.id}):go("main");
   $("toggleView").onclick=back;
+  $("hRep").onclick=()=>o.teacher?go("sreport",{hid:o.hid,kid:k.id}):go("report");
+  $("hRec").onclick=()=>o.teacher?go("srecord",{hid:o.hid,kid:k.id}):go("record");
   app.querySelectorAll("[data-w]").forEach(b=>b.onclick=()=>{const w=b.dataset.w===weekOf(today())?null:b.dataset.w;back();weekView=w;render()});
 }
 
@@ -507,7 +518,7 @@ function renderHalaqa(h){
    '<header class="bhead thead"><div class="bh-row"><div class="bh-name"><span>'+t("myhalaqas")+'</span><b>'+esc(h.name)+'</b></div><button class="codechip big" id="hCopy" dir="ltr" aria-label="'+t("copy")+'">'+esc(h.code)+'</button></div>'+
    '<div class="row"><svg width="74" height="74" viewBox="0 0 74 74" role="img" aria-label="'+t("done_n",dn,all.length)+'"><circle cx="37" cy="37" r="30" fill="none" stroke="#0a3b33" stroke-width="8"/><circle cx="37" cy="37" r="30" fill="none" stroke="#d4a23a" stroke-width="8" stroke-dasharray="'+(C*frac).toFixed(1)+' '+C.toFixed(1)+'" stroke-linecap="round" transform="rotate(-90 37 37)"/><text x="37" y="42" text-anchor="middle" font-size="16" font-weight="700" fill="#fbf8f1">'+dn+'/'+all.length+'</text></svg>'+
    '<div class="col"><b>'+t("done_n",dn,all.length)+'</b><span class="hint lt">'+(P.summaryAt?t("summary_at_hint",P.summaryAt):t("summary_off"))+'</span><span class="msg ok lt" id="hCMsg"></span></div></div></header>'+
-   '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
+   '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn accent" id="hRepB">'+t("week_report")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
    '<div class="weeknav"><button class="btn" id="dPrev">'+t("prev")+'</button><span class="lbl">'+DAYS[L()][parse(date).getDay()]+'<b>'+nice(date)+'</b></span><button class="btn" id="dNext">'+t("next")+'</button></div>'+
    (date===td?'':'<button class="btn accent" id="dNow" style="align-self:center">'+t("today")+'</button>')+
    '<section class="card"><div class="row between"><h2>'+t("students")+'</h2><div class="seg" id="hFil"><button data-v="all" aria-pressed="'+(hFilter==="all")+'">'+t("filter_all")+'</button><button data-v="not" aria-pressed="'+(hFilter==="not")+'">'+t("filter_not",notN)+'</button></div></div>'+
@@ -516,7 +527,7 @@ function renderHalaqa(h){
        '<div class="sact">'+starRow("t mini",t("tstars")).replace('class="stars','data-k="'+k.id+'" class="stars')+(!ok&&date===td?'<button class="btn small primary" data-rem="'+k.id+'"'+(reminded[k.id+date]?' disabled':'')+'>'+(reminded[k.id+date]?t("reminded"):t("remind"))+'</button>':'')+'</div></li>'}).join("")+'</ul>':'<p class="empty">'+t("no_students")+'</p>')+'</section>'+
    (all.length?'<section class="card"><h3>'+t("top_mistakes")+'</h3>'+(top.length?'<div class="items">'+top.map(([n,c])=>'<span class="item weak">'+esc(sName(+n))+'<small>'+c+'</small></span>').join("")+'</div>':'<p class="empty">'+t("no_mistakes")+'</p>')+'</section>':'')+demoNote();
   bindTop();
-  $("hBack").onclick=()=>go("main");$("hSet").onclick=()=>openHEdit(h.id);
+  $("hBack").onclick=()=>go("main");$("hSet").onclick=()=>openHEdit(h.id);$("hRepB").onclick=()=>go("hreport",{hid:h.id});
   $("hCopy").onclick=()=>copyText(h.code,$("hCMsg"));
   $("hFil").querySelectorAll("button").forEach(b=>b.onclick=()=>{hFilter=b.dataset.v;render()});
   $("dPrev").onclick=()=>{hDate=addDays(date,-1);render()};$("dNext").onclick=()=>{hDate=addDays(date,1);render()};
@@ -567,7 +578,7 @@ function renderSettings(){
    '<section class="card"><h2 class="sh">'+ICONS.globe+t("lang")+'</h2>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'</section>'+
    (hasLocal?'<section class="card"><button class="btn" id="imp">'+t("import_local")+'</button><p class="msg ok" id="impMsg"></p></section>':''))+
    '<section class="card"><h2 class="sh">'+ICONS.user+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
-   '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
+   '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><p class="hint">'+t("audio_src")+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
   $("sDone").onclick=()=>{go("main");scrollToday()};
   if($("cdOff"))$("cdOff").onclick=()=>{prefs.child=null;savePrefs();renderSettings()};
   $("nOn").onclick=async()=>{const m=$("nMsg");m.className="msg";try{const r=await D.enablePush(ck?{kidId:ck.id}:{});m.className="msg "+(r==="ok"?"ok":"err");m.textContent=t({ok:"notif_ok",denied:"notif_denied",unsupported:"notif_unsupported","ios-home":"notif_ios",demo:"notif_demo"}[r]||"err_generic")}catch(e){m.className="msg err";m.textContent=t("err_generic")}};
@@ -690,5 +701,124 @@ function renderHEdit(){
     }catch(e){$("eSave").disabled=false;$("eMsg").textContent=t("err_generic")}};
   let armed=false;if($("eDel"))$("eDel").onclick=async()=>{if(!armed){armed=true;$("eDel").className="btn warn big";$("eDel").textContent=t("del2");return}await D.deleteHalaqa(d.id);draft=null;go("main")};
 }
+
+
+/* ================= weekly report + PDF export ================= */
+function repData(k,w){
+  let home=0,cls=0,done=0,ayat=0;const miss={},news=[],tn=[],hn=[];
+  for(let i=0;i<7;i++){const d=addDays(w,i),r=day(k,d);if(!r)continue;const hs=+(r.stars||0),ts=+(r.tStars||0);home+=hs;cls+=ts;
+    if(hs>0){done++;ayat+=itemAyat(r.items||planFor(k,d))}
+    new Set([...(r.weak||[]),...(r.tWeak||[])]).forEach(n=>miss[n]=(miss[n]||0)+1);
+    if(r.nS)news.push({d,n:+r.nS,f:r.nF,t:r.nT});if(r.tNotes)tn.push({d,x:r.tNotes});if(r.notes)hn.push({d,x:r.notes})}
+  return{home,cls,done,ayat,miss:Object.entries(miss).map(([n,c])=>[+n,c]).sort((a,b)=>b[1]-a[1]||a[0]-b[0]),news,tn,hn};
+}
+const dayLbl=d=>DAYS[L()][parse(d).getDay()]+' '+nice(d);
+const repWeek=()=>nav.w==="prev"?addDays(weekOf(today()),-7):(nav.w||weekOf(today()));
+function repTop(title,sub){return '<header class="bhead rhead"><div class="bh-row"><div class="bh-name"><span>'+sub+'</span><b>'+title+'</b></div><span class="rlogo" aria-hidden="true">'+LOGO+'</span></div></header>'}
+function repNav(w){return '<div class="weeknav noprint"><button class="btn" id="rPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b></span><button class="btn" id="rNext">'+t("next")+'</button></div>'}
+function bindRep(w,back){
+  $("rPrev").onclick=()=>{nav.w=addDays(w,-7);render()};$("rNext").onclick=()=>{nav.w=addDays(w,7);render()};
+  $("rBack").onclick=back;$("rPdf").onclick=()=>window.print();
+}
+const repActs=()=>'<div class="row between noprint"><button class="btn" id="rBack">'+t("back")+'</button><button class="btn accent" id="rPdf">'+t("export_pdf")+'</button></div>';
+function renderReport(k,o){
+  applyPalette(appTheme());setMode("");
+  const w=repWeek(),R=repData(k,w),P=repData(k,addDays(w,-7)),diff=R.home-P.home,inH=!!k.halaqaId;
+  const cmp=diff>0?t("rep_up",diff):diff<0?t("rep_down",-diff):t("rep_same");
+  const list=(arr,f)=>arr.length?'<ul class="list">'+arr.map(f).join("")+'</ul>':'<p class="empty">'+t("rep_none")+'</p>';
+  app.innerHTML=repActs()+repTop(t("rep_of",esc(k.name)),t("week_report")+' · '+nice(w)+' – '+nice(addDays(w,6)))+repNav(w)+
+   '<section class="card"><div class="kpis">'+
+    '<div class="kpi"><b>'+R.done+'/7</b><span>'+t("rep_days")+'</span></div>'+
+    '<div class="kpi"><b>'+R.home+'/21</b><span>'+t("rep_home")+'</span></div>'+
+    (inH?'<div class="kpi"><b>'+R.cls+'/21</b><span>'+t("rep_class")+'</span></div>':'')+
+    '<div class="kpi"><b>'+R.ayat+'</b><span>'+t("rep_ayat")+'</span></div></div><p class="hint">'+cmp+'</p></section>'+
+   '<section class="card"><h3>'+t("rep_mist")+'</h3>'+(R.miss.length?'<div class="items">'+R.miss.map(([n,c])=>'<span class="item weak">'+esc(sName(n))+'<small>'+c+'</small></span>').join("")+'</div>':'<p class="empty">'+t("no_mistakes")+'</p>')+'</section>'+
+   '<section class="card"><h3>'+t("rep_new")+'</h3>'+list(R.news,x=>'<li><span class="t"><span class="q">'+esc(sName(x.n))+'</span> '+(x.f||x.t?'<span class="m">'+(x.f||"?")+'–'+(x.t||"?")+'</span>':'')+'</span><span class="m">'+dayLbl(x.d)+'</span></li>')+'</section>'+
+   (inH?'<section class="card"><h3>'+t("rep_tnotes")+'</h3>'+list(R.tn,x=>'<li><span>'+esc(x.x)+'</span><span class="m">'+dayLbl(x.d)+'</span></li>')+'</section>':'')+
+   '<section class="card"><h3>'+t("rep_notes")+'</h3>'+list(R.hn,x=>'<li><span>'+esc(x.x)+'</span><span class="m">'+dayLbl(x.d)+'</span></li>')+'</section>'+
+   '<p class="hint noprint">'+t("print_hint")+'</p><p class="hint printonly">'+t("printed_on",nice(today()))+' · '+t("app")+'</p>';
+  bindRep(w,()=>o.teacher?go("student",{hid:o.hid,kid:k.id}):go("hist"));
+}
+function renderHReport(h){
+  applyPalette(appTheme());setMode("");D.subStudents(h.id);
+  const w=repWeek(),all=Object.values(ST.students[h.id]||{}).sort((a,b)=>a.name.localeCompare(b.name,"ar")),rows=all.map(k=>({k,r:repData(k,w)}));
+  const full=rows.filter(x=>x.r.done===7).length,avg=rows.length?(rows.reduce((a,x)=>a+x.r.home,0)/rows.length).toFixed(1):"0",miss={};
+  rows.forEach(x=>x.r.miss.forEach(([n,c])=>miss[n]=(miss[n]||0)+c));const top=Object.entries(miss).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const notDone=rows.filter(x=>x.r.done<7).sort((a,b)=>a.r.done-b.r.done);
+  app.innerHTML=repActs()+repTop(esc(h.name),t("h_report")+' · '+nice(w)+' – '+nice(addDays(w,6)))+repNav(w)+
+   '<section class="card"><div class="kpis"><div class="kpi"><b>'+all.length+'</b><span>'+t("students")+'</span></div><div class="kpi"><b>'+full+'</b><span>'+t("rep_full")+'</span></div><div class="kpi"><b>'+avg+'</b><span>'+t("rep_avg")+'</span></div></div></section>'+
+   '<section class="card"><h3>'+t("students")+'</h3>'+(rows.length?'<table class="rtab"><thead><tr><th>'+t("rep_student")+'</th><th>'+t("rep_days")+'</th><th>'+t("rep_home")+'</th><th>'+t("rep_class")+'</th><th>'+t("mistake")+'</th></tr></thead><tbody>'+
+     rows.map(x=>'<tr><td>'+esc(x.k.name)+'</td><td>'+x.r.done+'/7</td><td>'+x.r.home+'</td><td>'+x.r.cls+'</td><td>'+x.r.miss.reduce((a,m)=>a+m[1],0)+'</td></tr>').join("")+'</tbody></table>':'<p class="empty">'+t("no_students")+'</p>')+'</section>'+
+   '<section class="card"><h3>'+t("rep_need")+'</h3>'+(notDone.length?'<ul class="list">'+notDone.map(x=>'<li><span>'+esc(x.k.name)+'</span><span class="m">'+x.r.done+'/7</span></li>').join("")+'</ul>':'<p class="empty">'+t("rep_none")+'</p>')+'</section>'+
+   '<section class="card"><h3>'+t("top_mistakes")+'</h3>'+(top.length?'<div class="items">'+top.map(([n,c])=>'<span class="item weak">'+esc(sName(+n))+'<small>'+c+'</small></span>').join("")+'</div>':'<p class="empty">'+t("no_mistakes")+'</p>')+'</section>'+
+   '<p class="hint noprint">'+t("print_hint")+'</p><p class="hint printonly">'+t("printed_on",nice(today()))+' · '+t("app")+'</p>';
+  bindRep(w,()=>go("halaqa",{hid:h.id}));
+}
+function renderRecord(k,o){
+  applyPalette(appTheme());setMode("");
+  const A=analyse(k),ids=Object.keys(A.lv).map(Number).sort((a,b)=>a-b),LV={good:t("good"),mid:t("mid"),bad:t("bad"),none:t("nolv")};
+  const avg=A.evald?(A.total/A.evald).toFixed(1):"0",inH=!!k.halaqaId;
+  app.innerHTML=repActs()+repTop(t("rec_title",esc(k.name)),t("printed_on",nice(today())))+
+   '<section class="card"><div class="kpis"><div class="kpi"><b>'+A.perWeek.length+'</b><span>'+t("k_weeks")+'</span></div><div class="kpi"><b>'+A.total+'</b><span>'+t("k_total")+'</span></div><div class="kpi"><b>'+avg+'</b><span>'+t("k_avg")+'</span></div><div class="kpi"><b>'+A.best+'</b><span>'+t("k_streak")+'</span></div></div></section>'+
+   '<section class="card"><h3>'+t("lv_t")+'</h3><table class="rtab"><tbody>'+ids.map(n=>{const v=A.lv[n];return '<tr><td><span class="dot" style="background:var(--'+v.level+')"></span> '+esc(sName(n))+'</td><td>'+LV[v.level]+'</td><td>'+(v.n?t("avg")+' '+v.avg.toFixed(1)+' · '+v.n+' '+t("times")+(v.weakN?' · '+t("mistake")+' '+v.weakN:''):'—')+'</td></tr>'}).join("")+'</tbody></table></section>'+
+   '<section class="card"><h3>'+t("weeks_t")+'</h3><table class="rtab"><thead><tr><th>'+t("week")+'</th><th>'+t("rep_days")+'</th><th>'+t("rep_home")+'</th>'+(inH?'<th>'+t("rep_class")+'</th>':'')+'</tr></thead><tbody>'+
+     A.perWeek.slice().reverse().map(x=>{const r=repData(k,x.w);return '<tr><td>'+nice(x.w)+' – '+nice(addDays(x.w,6))+'</td><td>'+r.done+'/7</td><td>'+r.home+'</td>'+(inH?'<td>'+r.cls+'</td>':'')+'</tr>'}).join("")+'</tbody></table></section>'+
+   '<section class="card"><h3>'+t("new_t")+'</h3>'+(A.news.length?'<ul class="list">'+A.news.map(x=>'<li><span class="t"><span class="q">'+esc(sName(x.n))+'</span> '+(x.f||x.t?'<span class="m">'+(x.f||"?")+'–'+(x.t||"?")+'</span>':'')+'</span><span class="m">'+dayLbl(x.d)+'</span></li>').join("")+'</ul>':'<p class="empty">'+t("new_none")+'</p>')+'</section>'+
+   '<p class="hint noprint">'+t("print_hint")+'</p><p class="hint printonly">'+t("app")+'</p>';
+  $("rBack").onclick=()=>o.teacher?go("shist",{hid:o.hid,kid:k.id}):go("hist");$("rPdf").onclick=()=>window.print();
+}
+
+/* ================= listening (alquran.cloud / Islamic Network CDN) ================= */
+const RECITERS=[["ar.husary",128,"rc_husary"],["ar.alafasy",128,"rc_alafasy"],["ar.minshawi",128,"rc_minshawi"],["ar.abdulbasit",192,"rc_abdulbasit"]];
+const AYAH0=(()=>{const a=[0];for(let i=0;i<114;i++)a.push(a[i]+S[i][2]);return a})(); // global number of ayah 1 of surah n = AYAH0[n-1]+1
+const ayahUrl=(rc,s,a)=>{const R=RECITERS.find(x=>x[0]===rc)||RECITERS[0];return "https://cdn.islamic.network/quran/audio/"+R[1]+"/"+R[0]+"/"+(AYAH0[s-1]+a)+".mp3"};
+const player={el:null,queue:[],i:0,rep:0,on:false,audio:null};
+function openListen(items){
+  const pr=prefs.audio||{rc:"ar.husary",mode:"ayah",rep:3};prefs.audio=pr;
+  const ov=document.createElement("div");ov.className="sheet";ov.setAttribute("role","dialog");ov.setAttribute("aria-modal","true");ov.setAttribute("aria-label",t("listen_t"));
+  ov.innerHTML='<div class="sheet-in"><div class="row between"><h2>'+t("listen_t")+'</h2><button class="btn" id="lClose">'+t("close")+'</button></div>'+
+   '<label class="field"><span class="sec-t">'+t("reciter")+'</span><select class="sel" id="lRc">'+RECITERS.map(r=>'<option value="'+r[0]+'"'+(r[0]===pr.rc?' selected':'')+'>'+t(r[2])+'</option>').join("")+'</select></label>'+
+   '<div class="field"><span class="sec-t">'+t("r_mode")+'</span>'+seg("lMode",[["ayah",t("m_ayah")],["full",t("m_full")]],pr.mode)+'</div>'+
+   '<div class="field" id="lRepF"'+(pr.mode==="ayah"?'':' hidden')+'><span class="sec-t">'+t("repeat")+'</span>'+seg("lRep",[[1,t("x_once")],[3,t("x_times",3)],[5,t("x_times",5)],[10,t("x_times",10)]],pr.rep)+'</div>'+
+   '<div class="items" id="lItems">'+items.map((it,j)=>'<button class="item" data-j="'+j+'">'+itemLabel(it)+'</button>').join("")+'</div>'+
+   '<p class="now" id="lNow" aria-live="polite"></p><div class="row"><button class="btn accent big" id="lPlay">'+t("play")+'</button><button class="btn" id="lStop">'+t("stop")+'</button></div>'+
+   '<p class="hint">'+t("audio_src")+'</p></div>';
+  document.body.appendChild(ov);player.el=ov;
+  const segBind=(id,f)=>$(id).querySelectorAll("button").forEach(b=>b.onclick=()=>{$(id).querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));f(b.dataset.v)});
+  $("lRc").onchange=e=>{pr.rc=e.target.value;savePrefs();if(player.on)playCur()};
+  segBind("lMode",v=>{pr.mode=v;savePrefs();$("lRepF").hidden=v!=="ayah"});
+  segBind("lRep",v=>{pr.rep=+v;savePrefs()});
+  const build=from=>{player.queue=[];items.forEach((it,j)=>{if(j<from)return;for(let a=it[1];a<=it[2];a++)player.queue.push({s:it[0],a,j})});player.i=0;player.rep=0};
+  ov.querySelectorAll("#lItems .item").forEach(b=>b.onclick=()=>{build(+b.dataset.j);start()});
+  const start=()=>{if(!player.queue.length)build(0);player.on=true;playCur()};
+  $("lPlay").onclick=()=>{const a=player.audio;if(player.on&&a&&!a.paused){a.pause();$("lPlay").textContent=t("play");return}if(player.on&&a&&a.paused&&a.src){a.play().catch(err);$("lPlay").textContent=t("pause");return}build(0);start()};
+  $("lStop").onclick=()=>stopListen(false);
+  $("lClose").onclick=()=>stopListen(true);
+  const err=()=>{$("lNow").textContent=t("audio_err");player.on=false;$("lPlay").textContent=t("play")};
+  player.err=err;$("lClose").focus();
+}
+function playCur(){
+  const q=player.queue[player.i];if(!q){stopListen(false);return}
+  if(!player.audio){player.audio=new Audio();player.audio.preload="auto";
+    player.audio.onended=()=>{const pr=prefs.audio;player.rep++;if(pr.mode!=="ayah"||player.rep>=pr.rep){player.rep=0;player.i++}playCur()};
+    player.audio.onerror=()=>player.err&&player.err()}
+  player.audio.src=ayahUrl(prefs.audio.rc,q.s,q.a);player.audio.play().then(()=>{if($("lPlay"))$("lPlay").textContent=t("pause")}).catch(()=>player.err&&player.err());
+  if($("lNow"))$("lNow").textContent=t("now_ayah",sName(q.s),q.a)+(prefs.audio.mode==="ayah"&&prefs.audio.rep>1?' · '+(player.rep+1)+'/'+prefs.audio.rep:'');
+  if(player.el)player.el.querySelectorAll("#lItems .item").forEach(b=>b.classList.toggle("on",+b.dataset.j===q.j));
+  const nx=player.queue[player.i+1];if(nx){const pre=new Audio();pre.preload="auto";pre.src=ayahUrl(prefs.audio.rc,nx.s,nx.a)}
+}
+function stopListen(close){
+  player.on=false;player.queue=[];player.i=0;player.rep=0;if(player.audio){player.audio.pause();player.audio.removeAttribute("src");player.audio.load()}
+  if($("lPlay"))$("lPlay").textContent=t("play");if($("lNow"))$("lNow").textContent="";
+  if(player.el)player.el.querySelectorAll("#lItems .item").forEach(b=>b.classList.remove("on"));
+  if(close&&player.el){player.el.remove();player.el=null}
+}
+
+/* open from a notification link: ?report=1 (parent, last week) or ?hreport=<halaqaId> (teacher) */
+(()=>{const q=new URLSearchParams(location.search);
+  if(q.get("report")){nav={view:"report",w:"prev"}}
+  else if(q.get("hreport")){prefs.mode="teach";nav={view:"hreport",hid:q.get("hreport"),w:"prev"}}
+  if(q.get("report")||q.get("hreport"))history.replaceState(null,"",location.pathname);
+})();
 
 render();

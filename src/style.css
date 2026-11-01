@@ -378,3 +378,32 @@ body{-webkit-font-smoothing:antialiased}
 .bnav{background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .hcard{box-shadow:var(--shadow)}
 .gatebox .q{color:var(--accent2)}
+
+/* ===== v5: weekly report, PDF export, listening ===== */
+.btn.listen{align-self:flex-start;display:inline-flex;align-items:center;gap:6px}
+.btn.listen svg{width:16px;height:16px;fill:currentColor}
+.rhead .rlogo svg{width:46px;height:46px}
+.kpis:has(.kpi:nth-child(4):last-child){grid-template-columns:repeat(2,1fr)}
+.rtab{width:100%;border-collapse:collapse;font-size:14px}
+.rtab th,.rtab td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:start}
+.rtab th{font-weight:600;color:var(--muted);font-size:12.5px}
+.rtab .dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle}
+.printonly{display:none}
+.sheet{position:fixed;inset:0;z-index:50;background:#0a1f1ab3;display:flex;align-items:flex-end;justify-content:center}
+.sheet-in{background:var(--surface);color:var(--ink);width:100%;max-width:560px;max-height:90vh;overflow:auto;border-radius:24px 24px 0 0;padding:18px max(16px,env(safe-area-inset-left,0px)) calc(18px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:12px;box-shadow:0 -8px 30px #0003}
+.sheet-in h2{margin:0}
+.sheet .seg{flex-wrap:wrap}
+.sheet .item.on{outline:3px solid var(--accent);outline-offset:1px}
+.sheet .now{min-height:1.4em;margin:0;font-weight:600}
+@media print{
+  @page{margin:14mm}
+  :root{--bg:#ffffff}
+  html,body,#app{background:#ffffff!important;color:#111111!important}
+  .noprint,.bnav,.topbar,.slimtop,.tabs,.sheet{display:none!important}
+  .printonly{display:block}
+  .card{box-shadow:none!important;border:1px solid #dddddd;break-inside:avoid;background:#ffffff!important}
+  .bhead{background:#ffffff!important;color:#0a3b33!important;border:1px solid #dddddd;border-radius:12px}
+  .bhead *{color:#0a3b33!important}
+  .item.weak{border:1px solid #c4422a}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}

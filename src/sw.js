@@ -4,7 +4,8 @@ if(CFG){
   importScripts("https://www.gstatic.com/firebasejs/__FBV__/firebase-app-compat.js","https://www.gstatic.com/firebasejs/__FBV__/firebase-messaging-compat.js");
   firebase.initializeApp(CFG);firebase.messaging();
 }
-self.addEventListener("notificationclick",e=>{e.notification.close();e.waitUntil(clients.matchAll({type:"window",includeUncontrolled:true}).then(cs=>{for(const c of cs){if("focus" in c)return c.focus()}return clients.openWindow("/")}))});
+self.addEventListener("notificationclick",e=>{e.notification.close();const d=e.notification.data||{},link=(d.FCM_MSG&&d.FCM_MSG.data&&d.FCM_MSG.data.link)||d.link||"/";
+  e.waitUntil(clients.matchAll({type:"window",includeUncontrolled:true}).then(cs=>{for(const c of cs){if("navigate" in c&&link!=="/")return c.navigate(link).then(x=>x&&x.focus());if("focus" in c)return c.focus()}return clients.openWindow(link)}))});
 const CACHE="sahibi-v2";
 self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(["/","/index.html","/app.js","/manifest.webmanifest","/icons/icon-192.png"])).then(()=>self.skipWaiting()))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
