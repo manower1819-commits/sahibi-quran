@@ -1,0 +1,10 @@
+/* Calm color themes for teens, adults and the app shell. hero = header band. */
+export const PALETTES={
+ emerald:{ar:"زمردي",en:"Emerald",v:{bg:"#f4ecdc",surface:"#fffdf8",surface2:"#efe5cf",ink:"#1c2421",muted:"#5b6762",accent:"#c8962e",accent2:"#0e5e4f",line:"#e5d9bf",star:"#d4a23a","on-accent":"#1c2421","on-primary":"#ffffff",hero:"#0e5e4f","hero-ink":"#fbf8f1",good:"#2f7d4f",mid:"#a87400",bad:"#c4422a"}},
+ emeraldNight:{ar:"زمردي ليلي",en:"Emerald night",dark:true,v:{bg:"#0a3b33",surface:"#0e4a40",surface2:"#145446",ink:"#f4ecdc",muted:"#b9cfc8",accent:"#d4a23a",accent2:"#e6c773",line:"#1d5a4c",star:"#d4a23a","on-accent":"#0a3b33","on-primary":"#0a3b33",hero:"#0e4a40","hero-ink":"#f4ecdc",good:"#7fd8a6",mid:"#e6c773",bad:"#ff9f8a"}},
+ night:{ar:"ليلي",en:"Night",dark:true,v:{bg:"#0b1430",surface:"#121e44",surface2:"#1a2a5a",ink:"#eef0fb",muted:"#a9b2d6",accent:"#e8c46a",accent2:"#e8c46a",line:"#26366b",star:"#e8c46a","on-accent":"#0b1430","on-primary":"#0b1430",hero:"#16245e","hero-ink":"#ffffff",good:"#7fd8a6",mid:"#e8c46a",bad:"#ff8f9a"}},
+ sand:{ar:"رملي",en:"Sand",v:{bg:"#f6efe3",surface:"#fffaf2",surface2:"#efe2cc",ink:"#3b2a18",muted:"#7d6648",accent:"#2f8a66",accent2:"#9a5a26",line:"#e5d3b3",star:"#e0a020","on-accent":"#ffffff","on-primary":"#ffffff",hero:"#9a5a26","hero-ink":"#fffaf2",good:"#2f7d4f",mid:"#a87400",bad:"#b8402a"}},
+ burgundy:{ar:"عنابي",en:"Burgundy",v:{bg:"#f7eef0",surface:"#fffafb",surface2:"#f0dfe3",ink:"#2e1419",muted:"#7a5a61",accent:"#b8902f",accent2:"#7a1f35",line:"#ead3d9",star:"#c9a14a","on-accent":"#2e1419","on-primary":"#ffffff",hero:"#7a1f35","hero-ink":"#fff7f9",good:"#2f7d4f",mid:"#a87400",bad:"#c4422a"}},
+ white:{ar:"أبيض بسيط",en:"Simple white",v:{bg:"#f5f6f5",surface:"#ffffff",surface2:"#eef1ef",ink:"#1b1f1d",muted:"#646c68",accent:"#0b7a55",accent2:"#0b7a55",line:"#e1e6e3",star:"#e0a020","on-accent":"#ffffff","on-primary":"#ffffff",hero:"#ffffff","hero-ink":"#1b1f1d",good:"#2f7d4f",mid:"#a87400",bad:"#c4422a"}}
+};
+export const PALETTE_ORDER=["emerald","emeraldNight","night","sand","burgundy","white"];

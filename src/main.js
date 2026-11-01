@@ -4,6 +4,7 @@ import {STAR,LOGO,THEMES,THEME_ORDER,giftSvg,ICON_GEAR,ICON_BACK} from "./themes
 import {createFakeBackend} from "./backend-fake.js";
 import {CONFIG} from "./config.js";
 import {avatar,LOOKS,SKINS} from "./avatar.js";
+import {PALETTES,PALETTE_ORDER} from "./palettes.js";
 import {juzCoverage,surahsOfJuz} from "./juz.js";
 import {PTS_STAR,PTS_WEEK,PTS_CHALLENGE,levelInfo,challengeFor,challengeProgress} from "./gamify.js";
 
@@ -75,8 +76,10 @@ function applyTheme(th){
   const root=document.documentElement.style;document.body.dataset.mode="";
   ["bg","surface","surface2","ink","muted","accent","accent2","line","star","on-accent","good","mid","bad","none"].forEach(k=>root.removeProperty("--"+k));
   root.removeProperty("color-scheme");app.classList.remove("sky");
-  if(!th||!THEMES[th])return;
+  ["hero","hero-ink","on-primary"].forEach(k=>root.removeProperty("--"+k));
+  if(!th||!THEMES[th]){setPalette(appTheme());return}
   const T=THEMES[th];Object.keys(T.c).forEach(k=>root.setProperty("--"+k,T.c[k]));
+  root.setProperty("--hero",T.dark?T.c.surface2:T.c.accent2);root.setProperty("--hero-ink","#ffffff");root.setProperty("--on-primary","#ffffff");
   root.setProperty("--good",T.dark?"#4cd98a":"#2f9e5b");root.setProperty("--mid",T.dark?"#ffc93c":"#d99a00");root.setProperty("--bad",T.dark?"#ff6b6b":"#e5484d");root.setProperty("--none",T.c.line);
   root.setProperty("color-scheme",T.dark?"dark":"light");if(T.sky)app.classList.add("sky");
 }
@@ -272,11 +275,14 @@ function scrollToday(){if(weekView)return;setTimeout(()=>{const d=$("day-"+today
 const modeOf=k=>k.mode||(k.age==null||k.age===""?"kids":+k.age<=8?"kids":+k.age<=14?"teens":"adults");
 const BRAND={light:{bg:"#f4ecdc",surface:"#fbf8f1",surface2:"#ece2cc",ink:"#1c2421",muted:"#5b6762",accent:"#d4a23a",accent2:"#0e5e4f",line:"#e2d6bd",star:"#d4a23a","on-accent":"#1c2421"},
  dark:{bg:"#0a3b33",surface:"#0e4a40",surface2:"#145446",ink:"#f4ecdc",muted:"#b9cfc8",accent:"#d4a23a",accent2:"#e6c773",line:"#1d5a4c",star:"#d4a23a","on-accent":"#0a3b33"}};
-function applyBrand(which){
-  applyTheme(null);const root=document.documentElement.style,P=BRAND[which],dk=which==="dark";
-  Object.keys(P).forEach(k=>root.setProperty("--"+k,P[k]));
-  root.setProperty("--good",dk?"#7fd8a6":"#2f7d4f");root.setProperty("--mid",dk?"#e6c773":"#a87400");root.setProperty("--bad",dk?"#ff9f8a":"#c4422a");root.setProperty("--none",P.line);
-  root.setProperty("color-scheme",dk?"dark":"light");
+const appTheme=()=>ST.profile.appTheme||prefs.appTheme||"emerald";
+const paletteFor=k=>k.palette||(modeOf(k)==="adults"?(ST.profile.appTheme||prefs.appTheme?appTheme():"emeraldNight"):appTheme());
+function setPalette(id){const P=PALETTES[id]||PALETTES.emerald,root=document.documentElement.style;Object.keys(P.v).forEach(k=>root.setProperty("--"+k,P.v[k]));root.setProperty("--none",P.v.line);root.setProperty("color-scheme",P.dark?"dark":"light");document.documentElement.dataset.pal=id}
+function applyPalette(id){applyTheme(null);setPalette(id)}
+function paletteGrid(id,sel,withDefault){
+  const opts=(withDefault?[""]:[]).concat(PALETTE_ORDER);
+  return '<div class="pals" id="'+id+'">'+opts.map(k=>{const P=k?PALETTES[k]:PALETTES[appTheme()];const v=P.v;
+    return '<button type="button" class="pal" data-pal="'+k+'" aria-pressed="'+(k===(sel||""))+'"><span class="pal-prev" style="background:'+v.bg+'"><i style="background:'+v.hero+'"></i><b style="background:'+v.surface+'"><u style="background:'+v.accent2+'"></u><s style="background:'+v.star+'"></s></b></span><span>'+(k?P[L()]:t("same_as_app"))+'</span></button>'}).join("")+'</div>';
 }
 function setMode(m){document.body.dataset.mode=m||""}
 let selDay=null;
@@ -288,7 +294,15 @@ const ICONS={
  chart:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>',
  star:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.6 5.6 6 .6-4.5 4 1.3 6L12 16l-5.4 3.2 1.3-6-4.5-4 6-.6z"/></svg>',
  gear:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>',
- flame:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 4 5 5 5 10a5 5 0 0 1-10 0c0-3 2-4 2-6 2 1 3 3 3 3s0-4 0-7z"/></svg>'
+ flame:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 4 5 5 5 10a5 5 0 0 1-10 0c0-3 2-4 2-6 2 1 3 3 3 3s0-4 0-7z"/></svg>',
+ palette:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A4.7 4.7 0 0 0 22 9.7C22 5.9 17.5 3 12 3z"/><circle cx="7.5" cy="11.5" r="1.2"/><circle cx="10.5" cy="7.5" r="1.2"/><circle cx="15.5" cy="7.5" r="1.2"/></svg>',
+ globe:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>',
+ bell:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>',
+ people:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 14.6c2.6.2 4.4 2 5 5.4"/></svg>',
+ book:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6c-2-1.6-5-2-8-1.6V19c3-.4 6 0 8 1.6 2-1.6 5-2 8-1.6V4.4C17 4 14 4.4 12 6z"/><path d="M12 6v14.6"/></svg>',
+ user:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>',
+ info:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>',
+ phone:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>'
 };
 function bottomNav(active,third){
   const it=[["main","home",t("today")],["hist",modeKid()==="kids"?"trophy":"chart",modeKid()==="kids"?t("treasures"):t("progress")],["gear",third||"lock",third==="gear"?t("settings"):t("for_parents")]];
@@ -375,7 +389,7 @@ function teenStats(k){
 }
 function badge(on,txt,label,color){return '<span class="badge'+(on?"":" off")+'"><svg viewBox="0 0 60 60" aria-hidden="true"><g transform="translate(30 30)"><rect x="-19" y="-19" width="38" height="38" rx="4" fill="'+(on?color:"none")+'" stroke="'+(on?color:"var(--line)")+'" stroke-width="2"'+(on?'':' stroke-dasharray="4 3"')+'/><rect x="-19" y="-19" width="38" height="38" rx="4" fill="'+(on?color:"none")+'" stroke="'+(on?color:"var(--line)")+'" stroke-width="2" transform="rotate(45)"'+(on?'':' stroke-dasharray="4 3"')+'/></g><text x="30" y="35" text-anchor="middle" font-size="13" font-weight="700" fill="'+(on?"#ffffff":"var(--muted)")+'">'+txt+'</text></svg>'+label+'</span>'}
 function renderTeen(k){
-  applyBrand("light");setMode("teens");_modeKid="teens";
+  applyPalette(paletteFor(k));setMode("teens");_modeKid="teens";
   const w=weekView||weekOf(today()),sel=pickDay(w),S2=teenStats(k),lv=levelInfo(S2.pts,L()),streak=streakOf(k);
   const ds=[...Array(7)].map((_,i)=>day(k,addDays(w,i))),kind=challengeFor(w),cp=challengeProgress(kind,ds);
   app.innerHTML=slimTop(k)+
@@ -393,11 +407,11 @@ function renderTeen(k){
 function juzRing(cov){
   const cx=90,cy=90,r=72;let s='';
   for(let i=0;i<30;i++){const a0=(-90+i*12+1)*Math.PI/180,a1=(-90+(i+1)*12-1)*Math.PI/180,f=cov[i].frac;
-    s+='<path d="M'+(cx+r*Math.cos(a0)).toFixed(1)+' '+(cy+r*Math.sin(a0)).toFixed(1)+' A'+r+' '+r+' 0 0 1 '+(cx+r*Math.cos(a1)).toFixed(1)+' '+(cy+r*Math.sin(a1)).toFixed(1)+'" stroke="'+(f>=1?"#d4a23a":f>0?"#8a7a4a":"#1d5a4c")+'" stroke-width="12" fill="none"/>'}
+    s+='<path d="M'+(cx+r*Math.cos(a0)).toFixed(1)+' '+(cy+r*Math.sin(a0)).toFixed(1)+' A'+r+' '+r+' 0 0 1 '+(cx+r*Math.cos(a1)).toFixed(1)+' '+(cy+r*Math.sin(a1)).toFixed(1)+'" stroke="'+(f>=1?"var(--accent)":f>0?"var(--muted)":"var(--line)")+'" stroke-width="12" fill="none"/>'}
   return s;
 }
 function renderAdult(k){
-  applyBrand("dark");setMode("adults");_modeKid="adults";
+  applyPalette(paletteFor(k));setMode("adults");_modeKid="adults";
   const w=weekView||weekOf(today()),sel=pickDay(w),p=effPlan(k),cov=juzCoverage(p.surahs||[]),full=cov.filter(c=>c.frac>=1).length;
   const mem=cov.reduce((a,c)=>a+c.got,0),pct=Math.round(mem/6236*1000)/10,A=analyse(k);
   const rows=cov.filter(c=>c.got>0).sort((a,b)=>b.juz-a.juz).map(c=>{const ss=surahsOfJuz(c.juz).filter(n=>A.lv[n]&&A.lv[n].n);const avg=ss.length?ss.reduce((a,n)=>a+A.lv[n].avg,0)/ss.length:null;
@@ -444,7 +458,7 @@ function chartSvg(pw){
   return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+t("chart_t")+'" direction="ltr">'+g+'</svg>';
 }
 function renderHist(k,o){
-  const md=modeOf(k);if(md==="kids"||o.teacher){applyTheme(k.theme);setMode(o.teacher?"":"kids")}else{applyBrand(md==="adults"?"dark":"light");setMode(md)}
+  const md=modeOf(k);if(md==="kids"||o.teacher){applyTheme(k.theme);setMode(o.teacher?"":"kids")}else{applyPalette(paletteFor(k));setMode(md)}
   const A=analyse(k),ids=Object.keys(A.lv).map(Number).sort((a,b)=>a-b),cnt={good:0,mid:0,bad:0,none:0};ids.forEach(n=>cnt[A.lv[n].level]++);
   const avg=A.evald?(A.total/A.evald).toFixed(1):"0",rate=A.elapsed?Math.round(A.evald/A.elapsed*100):0;
   const weakest=ids.filter(n=>A.lv[n].level==="bad"||A.lv[n].level==="mid").sort((a,b)=>{const ra=A.lv[a].level==="bad"?0:1,rb=A.lv[b].level==="bad"?0:1;return ra-rb||A.lv[a].avg-A.lv[b].avg}).slice(0,5);
@@ -480,7 +494,7 @@ function renderTeachHome(){
 const reminded={};
 let hFilter="all";
 function renderHalaqa(h){
-  applyBrand("light");setMode("teens");D.subStudents(h.id);
+  applyTheme(null);D.subStudents(h.id);
   const td=today(),date=hDate||td,all=Object.values(ST.students[h.id]||{}).sort((a,b)=>a.name.localeCompare(b.name,"ar"));
   const isDone=k=>+((day(k,date)||{}).stars||0)>0,dn=all.filter(isDone).length,notN=all.length-dn;
   const st=hFilter==="not"?all.filter(k=>!isDone(k)):all;
@@ -543,16 +557,17 @@ function renderSettings(){
   applyTheme(null);
   const P=ST.profile,ck=childKid(),hasLocal=(()=>{try{const v=JSON.parse(localStorage.getItem("sahibi-quran-v1")||"null");return v&&v.kids&&v.kids.length&&!P.imported?v:null}catch(e){return null}})();
   app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t("settings")+'</span><button class="btn primary" id="sDone">'+t("done")+'</button></div>'+
-   (ck?'<section class="card"><h2>'+t("childdev")+'</h2><p class="about">'+t("childdev_on",esc(ck.name))+'</p><button class="btn" id="cdOff" style="align-self:flex-start">'+t("childdev_off")+'</button></section>':'')+
-   '<section class="card"><h2>'+t("notif")+'</h2><button class="btn primary" id="nOn" style="align-self:flex-start">'+t("notif_on")+'</button><p class="msg" id="nMsg"></p>'+
+   (ck?'<section class="card"><h2 class="sh">'+ICONS.phone+t("childdev")+'</h2><p class="about">'+t("childdev_on",esc(ck.name))+'</p><button class="btn" id="cdOff" style="align-self:flex-start">'+t("childdev_off")+'</button></section>':'')+
+   '<section class="card"><h2 class="sh">'+ICONS.bell+t("notif")+'</h2><button class="btn primary" id="nOn" style="align-self:flex-start">'+t("notif_on")+'</button><p class="msg" id="nMsg"></p>'+
     (ck?'':'<label class="field"><span class="sec-t">'+t("remind_at")+'</span><select id="remAt">'+timeOptions(P.remindAt||"")+'</select></label>'+(halaqaList().length?'<label class="field"><span class="sec-t">'+t("summary_at")+'</span><select id="sumAt">'+timeOptions(P.summaryAt||"")+'</select></label>':''))+'</section>'+
    (ck?'':
-   '<section class="card"><h2>'+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",(effPlan(k).surahs||[]).length)+' · '+cycleLbl(effPlan(k).cycle||1))+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
-   '<section class="card"><h2>'+t("myhalaqas")+'</h2>'+(halaqaList().length?halaqaList().map(h=>'<div class="kidrow"><span class="t"><b>'+esc(h.name)+'</b><small dir="ltr">'+esc(h.code)+'</small></span><button class="btn" data-he="'+h.id+'">'+t("edit_kid")+'</button></div>').join(""):'<p class="about">'+t("teach_t")+'</p>')+'<button class="btn accent" id="sAddH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button></section>'+
-   '<section class="card"><h3>'+t("lang")+'</h3>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'</section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.people+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",(effPlan(k).surahs||[]).length)+' · '+cycleLbl(effPlan(k).cycle||1))+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.book+t("myhalaqas")+'</h2>'+(halaqaList().length?halaqaList().map(h=>'<div class="kidrow"><span class="t"><b>'+esc(h.name)+'</b><small dir="ltr">'+esc(h.code)+'</small></span><button class="btn" data-he="'+h.id+'">'+t("edit_kid")+'</button></div>').join(""):'<p class="about">'+t("teach_t")+'</p>')+'<button class="btn accent" id="sAddH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.palette+t("appearance")+'</h2><p class="about">'+t("appearance_t")+'</p>'+paletteGrid("sPal",appTheme(),false)+'</section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.globe+t("lang")+'</h2>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'</section>'+
    (hasLocal?'<section class="card"><button class="btn" id="imp">'+t("import_local")+'</button><p class="msg ok" id="impMsg"></p></section>':''))+
-   '<section class="card"><h2>'+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
-   '<section class="card"><h2>'+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
+   '<section class="card"><h2 class="sh">'+ICONS.user+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
   $("sDone").onclick=()=>{go("main");scrollToday()};
   if($("cdOff"))$("cdOff").onclick=()=>{prefs.child=null;savePrefs();renderSettings()};
   $("nOn").onclick=async()=>{const m=$("nMsg");m.className="msg";try{const r=await D.enablePush(ck?{kidId:ck.id}:{});m.className="msg "+(r==="ok"?"ok":"err");m.textContent=t({ok:"notif_ok",denied:"notif_denied",unsupported:"notif_unsupported","ios-home":"notif_ios",demo:"notif_demo"}[r]||"err_generic")}catch(e){m.className="msg err";m.textContent=t("err_generic")}};
@@ -565,6 +580,7 @@ function renderSettings(){
   if($("sAddH"))$("sAddH").onclick=()=>openHEdit(null);
   if($("sLang"))$("sLang").querySelectorAll("button").forEach(b=>b.onclick=()=>{prefs.lang=b.dataset.v;savePrefs();D.saveProfile({lang:b.dataset.v});renderSettings()});
   if($("sWs"))$("sWs").querySelectorAll("button").forEach(b=>b.onclick=()=>{D.saveProfile({weekStart:+b.dataset.v});renderSettings()});
+  if($("sPal"))$("sPal").querySelectorAll(".pal").forEach(b=>b.onclick=()=>{prefs.appTheme=b.dataset.pal;savePrefs();D.saveProfile({appTheme:b.dataset.pal});renderSettings()});
   if($("imp"))$("imp").onclick=async()=>{const v=hasLocal;let n=0;for(const k of v.kids){const id=uid("k");await D.saveKid({id,name:k.name,gender:k.gender||"m",theme:k.theme||"space",surahs:k.surahs,cycle:k.cycle||1,light:k.light==null?5:k.light,weekStart:v.weekStart==null?6:v.weekStart,start:k.start,created:Date.now()+n,halaqaId:null,teacherUid:null});
       const R=(v.rec||{})[k.id]||{};for(const d of Object.keys(R))await D.setDay(id,d,R[d]);n++}
     D.saveProfile({imported:true});$("impMsg").textContent=t("imported",n);$("imp").disabled=true};
@@ -602,6 +618,7 @@ function renderEdit(){
    '<section class="card"><label class="field"><span class="sec-t">'+t("kid_name")+'</span><input id="eName" autocomplete="off" maxlength="30" value="'+esc(d.name)+'"></label>'+seg("eGender",[["m",t("boy")],["f",t("girl")]],d.gender)+'</section>'+
    '<section class="card"><div class="row"><label class="field" style="flex:0 0 7em"><span class="sec-t">'+t("age")+'</span><input id="eAge" type="number" inputmode="numeric" min="3" max="99" value="'+esc(d.age==null?"":d.age)+'"></label><label class="checkrow"><input type="checkbox" id="eSelf"'+(d.self?' checked':'')+'> '+t("self")+'</label></div><h3>'+t("ui_mode")+'</h3>'+seg("eMode",[["",t("m_auto")],["kids",t("m_kids")],["teens",t("m_teens")],["adults",t("m_adults")]],d.mode||"")+'</section>'+
    (modeOf(d)!=="adults"?'<section class="card"><h3>'+t("look")+'</h3><div class="looks" id="eLooks">'+LOOKS.map((lk,i)=>'<button type="button" class="lk" data-lk="'+i+'" aria-pressed="'+(i===(d.look||0))+'">'+avatar(i,d.skin==null?1:d.skin)+'<span>'+lk[L()]+'</span></button>').join("")+'</div><h3>'+t("skin")+'</h3><div class="row" id="eSkin">'+SKINS.map((c,i)=>'<button type="button" class="skin" data-sk="'+i+'" aria-pressed="'+(i===(d.skin==null?1:d.skin))+'" style="background:'+c+'" aria-label="'+(i+1)+'"></button>').join("")+'</div></section>':'')+
+   (modeOf(d)!=="kids"?'<section class="card"><h3>'+t("profile_theme")+'</h3>'+paletteGrid("ePal",d.palette||"",true)+'</section>':'')+
    (modeOf(d)==="kids"?'<section class="card"><h3>'+t(d.gender==="f"?"theme_f":"theme")+'</h3><div class="themes" id="eThemes">'+THEME_ORDER.map(th=>'<button type="button" class="th" data-th="'+th+'" aria-pressed="'+(th===d.theme)+'">'+THEMES[th].art+'<span>'+THEMES[th][L()]+'</span></button>').join("")+'</div></section>':'')+
    '<section class="card"><h3>'+t("halaqa")+'</h3>'+(h?'<p class="about">'+t("joined",esc(h.name))+(h.teacherName?' · '+t("teacher_of",esc(h.teacherName)):'')+'</p><p class="about">'+(tp?t("plan_by_teacher",esc(h.name)):t("plan_by_parent"))+'</p><button type="button" class="btn" id="hLeave" style="align-self:flex-start">'+t("leave")+'</button>':
      '<div class="row"><input id="hCodeIn" class="codein" dir="ltr" maxlength="8" placeholder="'+t("halaqa_code")+'" autocomplete="off"><button type="button" class="btn primary" id="hJoin">'+t("join")+'</button></div>')+'<p class="msg" id="hMsg"></p></section>'+
@@ -614,6 +631,7 @@ function renderEdit(){
   $("eAge").onchange=e=>{const v=e.target.value.trim();d.age=v===""?"":Math.max(3,Math.min(99,Math.round(+v)||0));renderEdit()};
   $("eSelf").onchange=e=>{d.self=e.target.checked;if(d.self&&(d.age===""||d.age==null))d.age=30;renderEdit()};
   $("eMode").querySelectorAll("button").forEach(b=>b.onclick=()=>{d.mode=b.dataset.v||null;renderEdit()});
+  if($("ePal"))$("ePal").querySelectorAll(".pal").forEach(b=>b.onclick=()=>{d.palette=b.dataset.pal||null;$("ePal").querySelectorAll(".pal").forEach(x=>x.setAttribute("aria-pressed",String(x===b)))});
   if($("eLooks"))$("eLooks").querySelectorAll(".lk").forEach(b=>b.onclick=()=>{d.look=+b.dataset.lk;$("eLooks").querySelectorAll(".lk").forEach(x=>x.setAttribute("aria-pressed",String(x===b)))});
   if($("eSkin"))$("eSkin").querySelectorAll(".skin").forEach(b=>b.onclick=()=>{d.skin=+b.dataset.sk;renderEdit()});
   if(!tp)bindPlan(d);
@@ -635,7 +653,7 @@ async function saveDraft(quiet){
   if(!tp&&!d.surahs.length&&!quiet){$("eMsg").textContent=t("surah_req");return false}
   const prev=ST.kids[d.id];
   const changed=!prev||JSON.stringify([prev.surahs,prev.cycle,prev.light])!==JSON.stringify([d.surahs,d.cycle,d.light]);
-  const k={id:d.id,name:d.name,gender:d.gender,theme:d.theme,age:d.age===""?null:d.age,mode:d.mode||null,self:!!d.self,look:d.look||0,skin:d.skin==null?1:d.skin,surahs:d.surahs.slice().sort((a,b)=>a-b),cycle:d.cycle,light:d.light,weekStart:WS(),
+  const k={id:d.id,name:d.name,gender:d.gender,theme:d.theme,palette:d.palette||null,age:d.age===""?null:d.age,mode:d.mode||null,self:!!d.self,look:d.look||0,skin:d.skin==null?1:d.skin,surahs:d.surahs.slice().sort((a,b)=>a-b),cycle:d.cycle,light:d.light,weekStart:WS(),
     start:changed?weekOf(today()):(prev.start||weekOf(today())),created:prev&&prev.created||Date.now(),halaqaId:prev?prev.halaqaId||null:null,teacherUid:prev?prev.teacherUid||null:null};
   await D.saveKid(k);d._new=false;return true;
 }
