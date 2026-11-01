@@ -52,6 +52,19 @@ function bins(plan){
   chunks.sort((x,y)=>(y[2]-y[1])-(x[2]-x[1])||x[0]-y[0]||x[1]-y[1]);
   const load=new Array(N).fill(0),out=[];for(let b=0;b<N;b++)out.push([]);
   chunks.forEach(c=>{const len=c[2]-c[1]+1;let best=0,bv=Infinity;for(let b=0;b<N;b++){const v=(load[b]+len)/caps[b];if(v<bv-1e-9){bv=v;best=b}}load[best]+=len;out[best].push(c)});
+  // reorder days (only between days of equal capacity) so each day starts at the beginning of a surah where possible —
+  // day 1 always, then the rest of the first week first; then give each split surah's parts in day order (part 1 first)
+  const split=new Set(chunks.filter(c=>c[1]>1).map(c=>c[0])),minS=a=>a.reduce((m,c)=>Math.min(m,c[0]),Infinity);
+  const left=out.map((a,i)=>i),seen=new Set(),order=[];
+  for(let pos=0;pos<N;pos++){
+    const cand=left.filter(i=>caps[i]===caps[pos]);let pick=cand[0];
+    for(const i of cand){const m=minS(out[i]);if(!out[i].length||!split.has(m)||!seen.has(m)){pick=i;break}}
+    left.splice(left.indexOf(pick),1);order.push(pick);out[pick].forEach(c=>seen.add(c[0]));
+  }
+  const res=order.map(i=>out[i].map(c=>c.slice()));
+  split.forEach(n=>{const parts=[];res.forEach(a=>a.forEach(c=>{if(c[0]===n)parts.push(c)}));
+    const sizes=parts.map(c=>c[2]-c[1]+1).sort((x,y)=>y-x);let f=1;parts.forEach((c,j)=>{c[1]=f;c[2]=f+sizes[j]-1;f=c[2]+1})});
+  out.length=0;res.forEach(a=>out.push(a));
   out.forEach(a=>a.sort((x,y)=>x[0]-y[0]||x[1]-y[1]));
   binCache.set(key,out);return out;
 }
@@ -156,10 +169,12 @@ function renderAuth(){
    (up?'<label class="field"><span class="sec-t">'+t("your_name")+'</span><input id="aName" autocomplete="name" maxlength="40"></label>':'')+
    '<label class="field"><span class="sec-t">'+t("email")+'</span><input id="aEmail" type="email" autocomplete="email" dir="ltr" required></label>'+
    '<label class="field"><span class="sec-t">'+t("password")+'</span><input id="aPw" type="password" autocomplete="'+(up?"new-password":"current-password")+'" dir="ltr" required></label>'+
+   '<label class="checkrow"><input type="checkbox" id="aShow"> '+t("show_pw")+'</label>'+
    '<p class="msg err" id="aMsg"></p><button class="btn primary big" id="aGo" type="submit">'+t(up?"signup":"signin")+'</button>'+
    '<div class="row"><button class="btn" type="button" id="aSwitch">'+t(up?"have_acc":"no_acc")+'</button>'+(up?'':'<button class="btn" type="button" id="aForgot">'+t("forgot")+'</button>')+'</div></form>'+
    '<div class="row" style="justify-content:center"><button class="btn" id="aLang">'+(L()==="ar"?"English":"العربية")+'</button></div>';
   const msg=(m,ok)=>{const e=$("aMsg");e.className="msg "+(ok?"ok":"err");e.textContent=m};
+  $("aShow").onchange=e=>{$("aPw").type=e.target.checked?"text":"password"};
   $("aSwitch").onclick=()=>{authMode=up?"signin":"signup";renderAuth()};
   $("aLang").onclick=()=>{prefs.lang=L()==="ar"?"en":"ar";savePrefs();render()};
   if($("aForgot"))$("aForgot").onclick=async()=>{const e=$("aEmail").value.trim();if(!e){msg(t("auth/invalid-email"));return}try{await D.resetPw(e);msg(t("reset_sent"),true)}catch(x){msg(t(x.code)||t("err_generic"))}};
@@ -514,6 +529,9 @@ function renderHalaqa(h){
   const w=weekOf(date),miss={};all.forEach(k=>{for(let i=0;i<7;i++){const r=day(k,addDays(w,i));if(!r)continue;new Set([...(r.weak||[]),...(r.tWeak||[])]).forEach(n=>miss[n]=(miss[n]||0)+1)}});
   const top=Object.entries(miss).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const P=ST.profile;
+  const wtxt=items=>esc(items.map(it=>sName(it[0])+((it[1]>1||it[2]<S[it[0]-1][2])?' '+it[1]+'–'+it[2]:'')).join("، "));
+  const wmap={};all.forEach(k=>{wmap[k.id]=planFor(k,date)});
+  const wset=[...new Set(all.map(k=>JSON.stringify(wmap[k.id])))],oneW=wset.length===1&&wmap[all[0].id].length?wmap[all[0].id]:null;
   app.innerHTML=topbar()+
    '<header class="bhead thead"><div class="bh-row"><div class="bh-name"><span>'+t("myhalaqas")+'</span><b>'+esc(h.name)+'</b></div><button class="codechip big" id="hCopy" dir="ltr" aria-label="'+t("copy")+'">'+esc(h.code)+'</button></div>'+
    '<div class="row"><svg width="74" height="74" viewBox="0 0 74 74" role="img" aria-label="'+t("done_n",dn,all.length)+'"><circle cx="37" cy="37" r="30" fill="none" stroke="#0a3b33" stroke-width="8"/><circle cx="37" cy="37" r="30" fill="none" stroke="#d4a23a" stroke-width="8" stroke-dasharray="'+(C*frac).toFixed(1)+' '+C.toFixed(1)+'" stroke-linecap="round" transform="rotate(-90 37 37)"/><text x="37" y="42" text-anchor="middle" font-size="16" font-weight="700" fill="#fbf8f1">'+dn+'/'+all.length+'</text></svg>'+
@@ -521,9 +539,10 @@ function renderHalaqa(h){
    '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn accent" id="hRepB">'+t("week_report")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
    '<div class="weeknav"><button class="btn" id="dPrev">'+t("prev")+'</button><span class="lbl">'+DAYS[L()][parse(date).getDay()]+'<b>'+nice(date)+'</b></span><button class="btn" id="dNext">'+t("next")+'</button></div>'+
    (date===td?'':'<button class="btn accent" id="dNow" style="align-self:center">'+t("today")+'</button>')+
+   (oneW?'<section class="card"><div class="row between"><h2>'+t("today_wird")+'</h2><span class="hint">'+itemAyat(oneW)+' '+t("ayah")+'</span></div><div class="items">'+oneW.map(it=>'<span class="item">'+itemLabel(it)+'</span>').join("")+'</div></section>':'')+
    '<section class="card"><div class="row between"><h2>'+t("students")+'</h2><div class="seg" id="hFil"><button data-v="all" aria-pressed="'+(hFilter==="all")+'">'+t("filter_all")+'</button><button data-v="not" aria-pressed="'+(hFilter==="not")+'">'+t("filter_not",notN)+'</button></div></div>'+
    (all.length?'<ul class="list srows">'+st.map(k=>{const r=day(k,date)||{},hs=+(r.stars||0),ok=hs>0;
-     return '<li class="srow"><div class="sname"><span class="art s">'+avatar(k.look||0,k.skin==null?1:k.skin,{head:true})+'</span><span class="t"><button class="linkbtn" data-open="'+k.id+'">'+esc(k.name)+'</button><span class="hint '+(ok?"okc":"badc")+'">'+(ok?'✓ '+t("home_done")+' '+starsRO(hs):'✗ '+t("home_not"))+'</span></span></div>'+
+     return '<li class="srow"><div class="sname"><span class="art s">'+avatar(k.look||0,k.skin==null?1:k.skin,{head:true})+'</span><span class="t"><button class="linkbtn" data-open="'+k.id+'">'+esc(k.name)+'</button><span class="hint '+(ok?"okc":"badc")+'">'+(ok?'✓ '+t("home_done")+' '+starsRO(hs):'✗ '+t("home_not"))+'</span>'+(!oneW&&wmap[k.id].length?'<span class="hint">'+t("wird_lbl")+': '+wtxt(wmap[k.id])+'</span>':'')+'</span></div>'+
        '<div class="sact">'+starRow("t mini",t("tstars")).replace('class="stars','data-k="'+k.id+'" class="stars')+(!ok&&date===td?'<button class="btn small primary" data-rem="'+k.id+'"'+(reminded[k.id+date]?' disabled':'')+'>'+(reminded[k.id+date]?t("reminded"):t("remind"))+'</button>':'')+'</div></li>'}).join("")+'</ul>':'<p class="empty">'+t("no_students")+'</p>')+'</section>'+
    (all.length?'<section class="card"><h3>'+t("top_mistakes")+'</h3>'+(top.length?'<div class="items">'+top.map(([n,c])=>'<span class="item weak">'+esc(sName(+n))+'<small>'+c+'</small></span>').join("")+'</div>':'<p class="empty">'+t("no_mistakes")+'</p>')+'</section>':'')+demoNote();
   bindTop();
