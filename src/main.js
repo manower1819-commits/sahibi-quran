@@ -1,4 +1,5 @@
 import {S} from "./surahs.js";
+import {PAGE_START} from "./pages.js";
 import {I,DAYS,DSHORT} from "./i18n.js";
 import {STAR,LOGO,THEMES,THEME_ORDER,giftSvg,ICON_GEAR,ICON_BACK} from "./themes.js";
 import {createFakeBackend} from "./backend-fake.js";
@@ -41,17 +42,32 @@ const app=$("app");
 
 /* ================= planning ================= */
 const binCache=new Map();
+/* page weights: each ayah counts as 1/(ayat on its page), so a surah's weight is its length in mushaf pages */
+const AY0=[0];for(let i=0;i<114;i++)AY0.push(AY0[i]+S[i][2]);
+const AW=new Float64Array(6237),PSTART=new Set(PAGE_START);
+for(let p=0;p<604;p++){const a=PAGE_START[p],b=p<603?PAGE_START[p+1]:6237;for(let g=a;g<b;g++)AW[g]=1/(b-a)}
+const pgs=(n,f,t)=>{let w=0;for(let a=f;a<=t;a++)w+=AW[AY0[n-1]+a];return w};
 function bins(plan){
   const key=JSON.stringify([plan.surahs,plan.cycle,plan.light,plan.weekStart]);
   if(binCache.has(key))return binCache.get(key);
   const ws=plan.weekStart==null?6:plan.weekStart,N=7*plan.cycle,caps=[];
   for(let b=0;b<N;b++){const jd=(ws+b%7)%7;caps.push(jd===plan.light?0.5:1)}
-  const list=plan.surahs.slice().sort((a,b)=>a-b),total=list.reduce((a,n)=>a+S[n-1][2],0),unit=total/caps.reduce((a,c)=>a+c,0);
+  const list=plan.surahs.slice().sort((a,b)=>a-b),total=list.reduce((a,n)=>a+pgs(n,1,S[n-1][2]),0),unit=total/caps.reduce((a,c)=>a+c,0);
   const chunks=[];
-  list.forEach(n=>{const a=S[n-1][2];if(unit>0&&a>unit*1.3){const k=Math.ceil(a/unit),sz=Math.ceil(a/k);for(let f=1;f<=a;f+=sz)chunks.push([n,f,Math.min(a,f+sz-1)])}else chunks.push([n,1,a])});
-  chunks.sort((x,y)=>(y[2]-y[1])-(x[2]-x[1])||x[0]-y[0]||x[1]-y[1]);
+  list.forEach(n=>{const a=S[n-1][2],w=pgs(n,1,a);
+    if(unit>0&&w>unit*1.3){const k=Math.ceil(w/unit),cuts=[1];let acc=0,j=1;
+      // cut at the first ayah of a mushaf page, nearest to each equal share
+      for(let x=1;x<=a&&j<k;x++){const before=acc;acc+=AW[AY0[n-1]+x];const tgt=w*j/k;
+        if(acc>=tgt){let c=x+1;for(let y=x+1;y<=a;y++){if(PSTART.has(AY0[n-1]+y)){c=y;break}}
+          let cb=null;for(let y=x;y>cuts[cuts.length-1];y--){if(PSTART.has(AY0[n-1]+y)){cb=y;break}}
+          if(cb&&Math.abs(pgs(n,1,cb-1)-tgt)<=Math.abs(pgs(n,1,c-1)-tgt))c=cb;
+          if(c>cuts[cuts.length-1]&&c<=a)cuts.push(c);j++;}}
+      cuts.forEach((c,i)=>chunks.push([n,c,i+1<cuts.length?cuts[i+1]-1:a]))}
+    else chunks.push([n,1,a])});
+  const W=c=>pgs(c[0],c[1],c[2]);
+  chunks.sort((x,y)=>W(y)-W(x)||x[0]-y[0]||x[1]-y[1]);
   const load=new Array(N).fill(0),out=[];for(let b=0;b<N;b++)out.push([]);
-  chunks.forEach(c=>{const len=c[2]-c[1]+1;let best=0,bv=Infinity;for(let b=0;b<N;b++){const v=(load[b]+len)/caps[b];if(v<bv-1e-9){bv=v;best=b}}load[best]+=len;out[best].push(c)});
+  chunks.forEach(c=>{const len=W(c);let best=0,bv=Infinity;for(let b=0;b<N;b++){const v=(load[b]+len)/caps[b];if(v<bv-1e-9){bv=v;best=b}}load[best]+=len;out[best].push(c)});
   // reorder days (only between days of equal capacity) so each day starts at the beginning of a surah where possible —
   // day 1 always, then the rest of the first week first; then give each split surah's parts in day order (part 1 first)
   const split=new Set(chunks.filter(c=>c[1]>1).map(c=>c[0])),minS=a=>a.reduce((m,c)=>Math.min(m,c[0]),Infinity);
@@ -63,7 +79,7 @@ function bins(plan){
   }
   const res=order.map(i=>out[i].map(c=>c.slice()));
   split.forEach(n=>{const parts=[];res.forEach(a=>a.forEach(c=>{if(c[0]===n)parts.push(c)}));
-    const sizes=parts.map(c=>c[2]-c[1]+1).sort((x,y)=>y-x);let f=1;parts.forEach((c,j)=>{c[1]=f;c[2]=f+sizes[j]-1;f=c[2]+1})});
+    const rng=chunks.filter(c=>c[0]===n).map(c=>[c[1],c[2]]).sort((x,y)=>x[0]-y[0]);parts.forEach((c,j)=>{c[1]=rng[j][0];c[2]=rng[j][1]})});
   out.length=0;res.forEach(a=>out.push(a));
   out.forEach(a=>a.sort((x,y)=>x[0]-y[0]||x[1]-y[1]));
   binCache.set(key,out);return out;
