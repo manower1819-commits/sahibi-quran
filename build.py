@@ -4,7 +4,7 @@ cfgp=os.path.join(R,'config.local.json')
 cfg=json.load(open(cfgp)) if os.path.exists(cfgp) else {"firebase":None,"region":"","vapidKey":""}
 FBV="12.4.0"
 css=open(os.path.join(R,'src/style.css'),encoding='utf8').read()
-FONTS='<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Lalezar&family=Readex+Pro:wght@400;500;600&display=swap">'
+FONTS='<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Lalezar&family=Readex+Pro:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Baloo+Bhaijaan+2:wght@600;700;800&display=swap">'
 def bundle(demo,out):
     open(os.path.join(R,'src/config.js'),'w').write('export const CONFIG='+json.dumps(cfg if not demo else {"firebase":None,"region":"","vapidKey":""},ensure_ascii=False)+';\n')
     subprocess.run([os.path.join(R,'node_modules/.bin/esbuild'),'src/main.js','--bundle','--format=esm','--minify','--target=es2022',
