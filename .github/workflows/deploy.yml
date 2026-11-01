@@ -1,0 +1,22 @@
+name: deploy
+on:
+  push:
+    branches: [main]
+    paths-ignore: [".keepalive"]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: npm ci --no-audit --no-fund
+      - run: python3 build.py
+      - run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/sa.json"
+      - run: npx --yes firebase-tools@15.34.0 deploy --only hosting,firestore:rules --project sahibi-quran --non-interactive
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json

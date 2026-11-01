@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function halaqa(id) { return get(/databases/$(database)/documents/halaqas/$(id)).data; }
+    // A kid may point at a teacher only through that teacher's real class.
+    function teacherLinkOk(d) {
+      return d.get('teacherUid', null) == null
+        || (d.get('halaqaId', null) != null && halaqa(d.halaqaId).teacherUid == d.teacherUid);
+    }
+
+    // Parent/teacher profile (reminder times, device tokens). Owner only.
+    match /users/{uid} {
+      allow read, write: if signedIn() && me() == uid;
+    }
+
+    // Classes: anyone signed in may look one up by its code; only its teacher changes it.
+    match /halaqas/{hid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.teacherUid == me();
+      allow update: if signedIn() && resource.data.teacherUid == me() && request.resource.data.teacherUid == me();
+      allow delete: if signedIn() && resource.data.teacherUid == me();
+    }
+
+    // Teacher's "Remind" taps wait here; the scheduled job sends them and deletes them.
+    match /reminders/{rid} {
+      allow create: if signedIn() && request.resource.data.teacherUid == me()
+                    && request.resource.data.keys().hasOnly(['kidId', 'teacherUid', 'lang', 'at'])
+                    && get(/databases/$(database)/documents/kids/$(request.resource.data.kidId)).data.get('teacherUid', null) == me();
+    }
+
+    match /kids/{kid} {
+      allow read: if signedIn() && (resource.data.parentUid == me() || resource.data.get('teacherUid', null) == me());
+      allow create: if signedIn() && request.resource.data.parentUid == me() && teacherLinkOk(request.resource.data);
+      allow update: if signedIn() && resource.data.parentUid == me()
+                    && request.resource.data.parentUid == me()
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['halaqaId', 'teacherUid'])
+                        || teacherLinkOk(request.resource.data));
+      // The teacher can only take a student out of the class.
+      allow update: if signedIn() && resource.data.get('teacherUid', null) == me()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['halaqaId', 'teacherUid'])
+                    && request.resource.data.get('teacherUid', null) == null;
+      allow delete: if signedIn() && resource.data.parentUid == me();
+
+      match /days/{date} {
+        function k() { return get(/databases/$(database)/documents/kids/$(kid)).data; }
+        function isParent() { return k().parentUid == me(); }
+        function isTeacher() { return k().get('teacherUid', null) == me(); }
+        function homeKeys() { return ['items', 'stars', 'weak', 'extra', 'nS', 'nF', 'nT', 'notes']; }
+        function classKeys() { return ['items', 'tStars', 'tWeak', 'tNotes']; }
+        function changed() {
+          return resource == null ? request.resource.data.keys() : request.resource.data.diff(resource.data).affectedKeys();
+        }
+        allow read: if signedIn() && (isParent() || isTeacher());
+        // Home rating belongs to the family; class rating belongs to the teacher.
+        allow create, update: if signedIn() && (
+          (isParent() && changed().hasOnly(homeKeys())) ||
+          (isTeacher() && changed().hasOnly(classKeys())));
+        allow delete: if signedIn() && isParent();
+      }
+    }
+  }
+}
