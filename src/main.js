@@ -769,7 +769,7 @@ function renderRecord(k,o){
 }
 
 /* ================= listening (alquran.cloud / Islamic Network CDN) ================= */
-const RECITERS=[["ar.husary",128,"rc_husary"],["ar.alafasy",128,"rc_alafasy"],["ar.minshawi",128,"rc_minshawi"],["ar.abdulbasit",192,"rc_abdulbasit"]];
+const RECITERS=[["ar.husary",128,"rc_husary"],["ar.alafasy",128,"rc_alafasy"],["ar.minshawi",128,"rc_minshawi"],["ar.abdulbasitmurattal",192,"rc_abdulbasit"]];
 const AYAH0=(()=>{const a=[0];for(let i=0;i<114;i++)a.push(a[i]+S[i][2]);return a})(); // global number of ayah 1 of surah n = AYAH0[n-1]+1
 const ayahUrl=(rc,s,a)=>{const R=RECITERS.find(x=>x[0]===rc)||RECITERS[0];return "https://cdn.islamic.network/quran/audio/"+R[1]+"/"+R[0]+"/"+(AYAH0[s-1]+a)+".mp3"};
 const player={el:null,queue:[],i:0,rep:0,on:false,audio:null};
