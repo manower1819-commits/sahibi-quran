@@ -97,6 +97,8 @@ function planFor(kid,date){
 }
 function setField(kid,date,f){quietUntil=Date.now()+900;const r=day(kid,date);if(!r||!r.items)f=Object.assign({items:planFor(kid,date)},f);D.setDay(kid.id,date,f)}
 const itemAyat=items=>items.reduce((s,it)=>s+it[2]-it[1]+1,0);
+const itemPages=items=>items.reduce((s,it)=>s+pgs(it[0],it[1],it[2]),0);
+const amt=items=>{const pg=Math.round(itemPages(items)*10)/10;return itemAyat(items)+' '+t("ayah")+' · '+pg+' '+(L()==="en"&&pg===1?"page":t("page_u"))};
 const itemLabel=it=>{const a=S[it[0]-1][2];return esc(sName(it[0]))+((it[1]>1||it[2]<a)?'<small>'+it[1]+'–'+it[2]+'</small>':'')};
 const cycleLbl=c=>c===1?t("week1"):c===2?t("weeks2"):t("weeks",c);
 
@@ -266,14 +268,14 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   const jd=parse(date).getDay(),r=day(k,date)||{},items=planFor(k,date),isToday=date===today();
   const weakKey=teacherMode?"tWeak":"weak",weak=r[weakKey]||[],p=effPlan(k),A=variant==="adults"?analyse(k):null;
   const el=document.createElement("article");el.className="card day v-"+variant+(isToday&&variant==="week"?" today":"");el.id="day-"+date;
-  const head=variant==="kids"?'<div class="day-h"><h2>'+(isToday?t("mission"):DAYS[L()][jd])+'</h2><span class="d">'+(items.length?itemAyat(items)+' '+t("ayah"):'')+'</span></div>'
-    :'<div class="day-h"><h2>'+(variant==="week"?DAYS[L()][jd]:t("review_of",DAYS[L()][jd]))+(isToday&&variant==="week"?'<span class="chip today">'+t("today")+'</span>':'')+(jd===p.light?'<span class="chip">'+t("lightchip")+'</span>':'')+'</h2><span class="d">'+(variant==="week"?nice(date):(items.length?itemAyat(items)+' '+t("ayah"):''))+'</span></div>';
+  const head=variant==="kids"?'<div class="day-h"><h2>'+(isToday?t("mission"):DAYS[L()][jd])+'</h2><span class="d">'+(items.length?amt(items):'')+'</span></div>'
+    :'<div class="day-h"><h2>'+(variant==="week"?DAYS[L()][jd]:t("review_of",DAYS[L()][jd]))+(isToday&&variant==="week"?'<span class="chip today">'+t("today")+'</span>':'')+(jd===p.light?'<span class="chip">'+t("lightchip")+'</span>':'')+'</h2><span class="d">'+(variant==="week"?nice(date):(items.length?amt(items):''))+'</span></div>';
   let list;
   if(!items.length)list='<p class="empty">'+t("no_review")+'</p>';
   else if(variant==="adults")list='<div class="rows">'+items.map(it=>{const lv=A.lv[it[0]],str=lv&&lv.n?t("strength")+' '+lv.avg.toFixed(1):t("nolv");return '<button class="item row'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'"><span class="q">'+itemLabel(it)+'</span><span class="m">'+(it[2]-it[1]+1)+' '+t("ayah")+' · '+str+'</span></button>'}).join("")+'</div><span class="hint">'+t("tap_weak_self")+'</span>';
   else list='<div class="items">'+items.map(it=>'<button class="item'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'">'+itemLabel(it)+'</button>').join("")+'</div><span class="hint">'+(teacherMode?t("tweak"):variant==="teens"||k.self?t("tap_weak_self"):t(k.gender==="f"?"tap_weak_f":"tap_weak"))+'</span>';
   if(items.length)list+='<button class="btn small listen" data-listen>'+ICONS.play+t("listen")+'</button>';
-  let html=head+(variant==="week"?'<div class="field"><div class="sec-t"><span>'+t("review")+'</span><span>'+(items.length?itemAyat(items)+' '+t("ayah"):'')+'</span></div>'+list+'</div>':list);
+  let html=head+(variant==="week"?'<div class="field"><div class="sec-t"><span>'+t("review")+'</span><span>'+(items.length?amt(items):'')+'</span></div>'+list+'</div>':list);
   const extras='<label class="field"><span class="sec-t">'+t("extra")+'</span><input data-f="extra" id="ex-'+date+'" autocomplete="off" placeholder="'+t("extra_ph")+'"></label>'+
       '<div class="field"><span class="sec-t">'+t("newm")+'</span><div class="newrow"><select class="sel" data-f="nS" id="ns-'+date+'" aria-label="'+t("new_surah")+'">'+surahOptions(+r.nS||0)+'</select><input data-f="nF" id="nf-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input data-f="nT" id="nt-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div></div>'+
       '<label class="field"><span class="sec-t">'+t("notes")+'</span><textarea data-f="notes" id="no-'+date+'" rows="1"></textarea></label>';
@@ -555,7 +557,7 @@ function renderHalaqa(h){
    '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn accent" id="hRepB">'+t("week_report")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
    '<div class="weeknav"><button class="btn" id="dPrev">'+t("prev")+'</button><span class="lbl">'+DAYS[L()][parse(date).getDay()]+'<b>'+nice(date)+'</b></span><button class="btn" id="dNext">'+t("next")+'</button></div>'+
    (date===td?'':'<button class="btn accent" id="dNow" style="align-self:center">'+t("today")+'</button>')+
-   (oneW?'<section class="card"><div class="row between"><h2>'+t("today_wird")+'</h2><span class="hint">'+itemAyat(oneW)+' '+t("ayah")+'</span></div><div class="items">'+oneW.map(it=>'<span class="item">'+itemLabel(it)+'</span>').join("")+'</div></section>':'')+
+   (oneW?'<section class="card"><div class="row between"><h2>'+t("today_wird")+'</h2><span class="hint">'+amt(oneW)+'</span></div><div class="items">'+oneW.map(it=>'<span class="item">'+itemLabel(it)+'</span>').join("")+'</div></section>':'')+
    '<section class="card"><div class="row between"><h2>'+t("students")+'</h2><div class="seg" id="hFil"><button data-v="all" aria-pressed="'+(hFilter==="all")+'">'+t("filter_all")+'</button><button data-v="not" aria-pressed="'+(hFilter==="not")+'">'+t("filter_not",notN)+'</button></div></div>'+
    (all.length?'<ul class="list srows">'+st.map(k=>{const r=day(k,date)||{},hs=+(r.stars||0),ok=hs>0;
      return '<li class="srow"><div class="sname"><span class="art s">'+avatar(k.look||0,k.skin==null?1:k.skin,{head:true})+'</span><span class="t"><button class="linkbtn" data-open="'+k.id+'">'+esc(k.name)+'</button><span class="hint '+(ok?"okc":"badc")+'">'+(ok?'✓ '+t("home_done")+' '+starsRO(hs):'✗ '+t("home_not"))+'</span>'+(!oneW&&wmap[k.id].length?'<span class="hint">'+t("wird_lbl")+': '+wtxt(wmap[k.id])+'</span>':'')+'</span></div>'+
