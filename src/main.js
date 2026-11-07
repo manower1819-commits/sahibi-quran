@@ -1,5 +1,5 @@
 import {S} from "./surahs.js";
-import {PAGE_START} from "./pages.js";
+import {pad,iso,parse,addDays,diffDays,weekOfWs,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,itemAyat,itemPages} from "./planner.js";
 import {I,DAYS,DSHORT} from "./i18n.js";
 import {STAR,LOGO,THEMES,THEME_ORDER,giftSvg,ICON_GEAR,ICON_BACK} from "./themes.js";
 import {createFakeBackend} from "./backend-fake.js";
@@ -7,6 +7,7 @@ import {CONFIG} from "./config.js";
 import {avatar,LOOKS,SKINS} from "./avatar.js";
 import {PALETTES,PALETTE_ORDER} from "./palettes.js";
 import {juzCoverage,surahsOfJuz} from "./juz.js";
+import {makeBackup,parseBackup,MAX_FILE_BYTES} from "./backup.js";
 import {PTS_STAR,PTS_WEEK,PTS_CHALLENGE,levelInfo,challengeFor,challengeProgress} from "./gamify.js";
 
 /* ================= backend ================= */
@@ -27,77 +28,28 @@ function t(k){let s=(I[L()]&&I[L()][k])||I.ar[k]||k;for(let i=1;i<arguments.leng
 const sName=n=>S[n-1][L()==="en"?1:0];
 const esc=x=>String(x==null?"":x).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
 const $=id=>document.getElementById(id);
-const pad=n=>(n<10?"0":"")+n;
-const iso=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
-const parse=s=>{const p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2])};
-const addDays=(s,n)=>{const d=parse(s);d.setDate(d.getDate()+n);return iso(d)};
-const diffDays=(a,b)=>Math.round((parse(b)-parse(a))/864e5);
 const WS=()=>ST.profile.weekStart==null?(L()==="en"?0:6):ST.profile.weekStart;
-const weekOf=(s,ws)=>{ws=ws==null?WS():ws;const d=parse(s);d.setDate(d.getDate()-((d.getDay()-ws+7)%7));return iso(d)};
+const weekOf=(s,ws)=>weekOfWs(s,ws==null?WS():ws);
 const nice=s=>new Intl.DateTimeFormat(L()==="en"?"en-GB":"ar-u-ca-gregory-nu-latn",{day:"numeric",month:"short"}).format(parse(s));
+const giftTail=k=>k.gift?' · '+t("gift_is",esc(k.gift)):'';
+const hij=s=>{if(!ST.profile.hijri)return"";
+  try{return new Intl.DateTimeFormat(L()==="en"?"en-u-ca-islamic-umalqura-nu-latn":"ar-u-ca-islamic-umalqura-nu-latn",{day:"numeric",month:"long"}).format(parse(s))}catch(e){return""}};
+const niceH=s=>{const h=hij(s);return h?nice(s)+' · '+h:nice(s)};
 const today=()=>iso(new Date());
 const range=(a,b)=>{const r=[];for(let i=a;i<=b;i++)r.push(i);return r};
 const uid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const app=$("app");
 
 /* ================= planning ================= */
-const binCache=new Map();
-/* page weights: each ayah counts as 1/(ayat on its page), so a surah's weight is its length in mushaf pages */
-const AY0=[0];for(let i=0;i<114;i++)AY0.push(AY0[i]+S[i][2]);
-const AW=new Float64Array(6237),PSTART=new Set(PAGE_START);
-for(let p=0;p<604;p++){const a=PAGE_START[p],b=p<603?PAGE_START[p+1]:6237;for(let g=a;g<b;g++)AW[g]=1/(b-a)}
-const pgs=(n,f,t)=>{let w=0;for(let a=f;a<=t;a++)w+=AW[AY0[n-1]+a];return w};
-function bins(plan){
-  const key=JSON.stringify([plan.surahs,plan.cycle,plan.light,plan.weekStart]);
-  if(binCache.has(key))return binCache.get(key);
-  const ws=plan.weekStart==null?6:plan.weekStart,N=7*plan.cycle,caps=[];
-  for(let b=0;b<N;b++){const jd=(ws+b%7)%7;caps.push(jd===plan.light?0.5:1)}
-  const list=plan.surahs.slice().sort((a,b)=>a-b),total=list.reduce((a,n)=>a+pgs(n,1,S[n-1][2]),0),unit=total/caps.reduce((a,c)=>a+c,0);
-  const chunks=[];
-  list.forEach(n=>{const a=S[n-1][2],w=pgs(n,1,a);
-    if(unit>0&&w>unit*1.3){const k=Math.ceil(w/unit),cuts=[1];let acc=0,j=1;
-      // cut at the first ayah of a mushaf page, nearest to each equal share
-      for(let x=1;x<=a&&j<k;x++){const before=acc;acc+=AW[AY0[n-1]+x];const tgt=w*j/k;
-        if(acc>=tgt){let c=x+1;for(let y=x+1;y<=a;y++){if(PSTART.has(AY0[n-1]+y)){c=y;break}}
-          let cb=null;for(let y=x;y>cuts[cuts.length-1];y--){if(PSTART.has(AY0[n-1]+y)){cb=y;break}}
-          if(cb&&Math.abs(pgs(n,1,cb-1)-tgt)<=Math.abs(pgs(n,1,c-1)-tgt))c=cb;
-          if(c>cuts[cuts.length-1]&&c<=a)cuts.push(c);j++;}}
-      cuts.forEach((c,i)=>chunks.push([n,c,i+1<cuts.length?cuts[i+1]-1:a]))}
-    else chunks.push([n,1,a])});
-  const W=c=>pgs(c[0],c[1],c[2]);
-  chunks.sort((x,y)=>W(y)-W(x)||x[0]-y[0]||x[1]-y[1]);
-  const load=new Array(N).fill(0),out=[];for(let b=0;b<N;b++)out.push([]);
-  chunks.forEach(c=>{const len=W(c);let best=0,bv=Infinity;for(let b=0;b<N;b++){const v=(load[b]+len)/caps[b];if(v<bv-1e-9){bv=v;best=b}}load[best]+=len;out[best].push(c)});
-  // reorder days (only between days of equal capacity) so each day starts at the beginning of a surah where possible —
-  // day 1 always, then the rest of the first week first; then give each split surah's parts in day order (part 1 first)
-  const split=new Set(chunks.filter(c=>c[1]>1).map(c=>c[0])),minS=a=>a.reduce((m,c)=>Math.min(m,c[0]),Infinity);
-  const left=out.map((a,i)=>i),seen=new Set(),order=[];
-  for(let pos=0;pos<N;pos++){
-    const cand=left.filter(i=>caps[i]===caps[pos]);let pick=cand[0];
-    for(const i of cand){const m=minS(out[i]);if(!out[i].length||!split.has(m)||!seen.has(m)){pick=i;break}}
-    left.splice(left.indexOf(pick),1);order.push(pick);out[pick].forEach(c=>seen.add(c[0]));
-  }
-  const res=order.map(i=>out[i].map(c=>c.slice()));
-  split.forEach(n=>{const parts=[];res.forEach(a=>a.forEach(c=>{if(c[0]===n)parts.push(c)}));
-    const rng=chunks.filter(c=>c[0]===n).map(c=>[c[1],c[2]]).sort((x,y)=>x[0]-y[0]);parts.forEach((c,j)=>{c[1]=rng[j][0];c[2]=rng[j][1]})});
-  out.length=0;res.forEach(a=>out.push(a));
-  out.forEach(a=>a.sort((x,y)=>x[0]-y[0]||x[1]-y[1]));
-  binCache.set(key,out);return out;
-}
 function halaqaOf(kid){if(!kid||!kid.halaqaId)return null;return ST.hdocs[kid.halaqaId]||ST.halaqas[kid.halaqaId]||null}
-function effPlan(kid){const h=halaqaOf(kid);return h&&h.plan&&h.plan.surahs&&h.plan.surahs.length?h.plan:kid}
+function effPlan(kid){const h=halaqaOf(kid);return h&&planHas(h.plan)?h.plan:kid}
+const planSurahCount=p=>new Set(planUnits(p).map(u=>u[0])).size;
 function day(kid,date){return ((ST.days[kid.id]||{})[date])||null}
 function planFor(kid,date){
   const r=day(kid,date);if(r&&r.items)return r.items;
-  const p=effPlan(kid);if(!p.surahs||!p.surahs.length)return[];
-  const ws=p.weekStart==null?6:p.weekStart;
-  const wk=Math.round(diffDays(p.start||weekOf(date,ws),weekOf(date,ws))/7),wi=((wk%p.cycle)+p.cycle)%p.cycle;
-  const off=(parse(date).getDay()-ws+7)%7;
-  return bins(p)[wi*7+off].map(c=>[c[0],c[1],c[2]]);
+  return planItems(effPlan(kid),date);
 }
 function setField(kid,date,f){quietUntil=Date.now()+900;const r=day(kid,date);if(!r||!r.items)f=Object.assign({items:planFor(kid,date)},f);D.setDay(kid.id,date,f)}
-const itemAyat=items=>items.reduce((s,it)=>s+it[2]-it[1]+1,0);
-const itemPages=items=>items.reduce((s,it)=>s+pgs(it[0],it[1],it[2]),0);
 const amt=items=>{const pg=Math.round(itemPages(items)*10)/10;return itemAyat(items)+' '+t("ayah")+' · '+pg+' '+(L()==="en"&&pg===1?"page":t("page_u"))};
 const itemLabel=it=>{const a=S[it[0]-1][2];return esc(sName(it[0]))+((it[1]>1||it[2]<a)?'<small>'+it[1]+'–'+it[2]+'</small>':'')};
 const cycleLbl=c=>c===1?t("week1"):c===2?t("weeks2"):t("weeks",c);
@@ -166,7 +118,15 @@ function render(){
   if(v==="record")return renderRecord(k,{});
   return renderKid(k);
 }
-function renderKid(k){const m=modeOf(k);return m==="adults"?renderAdult(k):m==="teens"?renderTeen(k):renderKids(k)}
+function renderKid(k){const m=modeOf(k);m==="adults"?renderAdult(k):m==="teens"?renderTeen(k):renderKids(k);try{maybeOnboard(k,m)}catch(e){}}
+function maybeOnboard(k,m){
+  if(prefs.onb)return;prefs.onb=1;savePrefs();
+  if(m!=="kids"||childKid()||!k.created||Date.now()-k.created>2*864e5)return;
+  let i=0;const ov=document.createElement("div");ov.className="celebrate onb";ov.setAttribute("role","dialog");ov.setAttribute("aria-modal","true");
+  const draw=()=>{ov.innerHTML='<div class="cel-in"><h2>'+t("onb_t"+i)+'</h2><p>'+t("onb_p"+i)+'</p><div class="dots">'+[0,1,2].map(j=>'<i'+(j===i?' class="on"':'')+'></i>').join("")+'</div><button class="btn accent big" id="onbNext">'+t(i<2?"onb_next":"onb_go")+'</button>'+(i<2?'<button class="btn" id="onbSkip">'+t("onb_skip")+'</button>':'')+'</div>';
+    $("onbNext").onclick=()=>{if(i<2){i++;draw()}else ov.remove()};if($("onbSkip"))$("onbSkip").onclick=()=>ov.remove();$("onbNext").focus()};
+  document.body.appendChild(ov);draw();
+}
 // update live parts without destroying inputs (path, stars, teacher rows)
 function refreshLive(){
   if(nav.view==="main"&&$("path")){const k=childKid()||curKid();if(k&&modeOf(k)==="kids"){const w=weekView||weekOf(today());$("path").innerHTML=kidsScene(k,w,pickDay(w));bindScene(k,w)}}
@@ -271,15 +231,16 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   const weakKey=teacherMode?"tWeak":"weak",weak=r[weakKey]||[],p=effPlan(k),A=variant==="adults"?analyse(k):null;
   const el=document.createElement("article");el.className="card day v-"+variant+(isToday&&variant==="week"?" today":"");el.id="day-"+date;
   const head=variant==="kids"?'<div class="day-h"><h2>'+(isToday?t("mission"):DAYS[L()][jd])+'</h2><span class="d">'+(items.length?amt(items):'')+'</span></div>'
-    :'<div class="day-h"><h2>'+(variant==="week"?DAYS[L()][jd]:t("review_of",DAYS[L()][jd]))+(isToday&&variant==="week"?'<span class="chip today">'+t("today")+'</span>':'')+(jd===p.light?'<span class="chip">'+t("lightchip")+'</span>':'')+'</h2><span class="d">'+(variant==="week"?nice(date):(items.length?amt(items):''))+'</span></div>';
+    :'<div class="day-h"><h2>'+(variant==="week"?DAYS[L()][jd]:t("review_of",DAYS[L()][jd]))+(isToday&&variant==="week"?'<span class="chip today">'+t("today")+'</span>':'')+(jd===p.light?'<span class="chip">'+t("lightchip")+'</span>':'')+'</h2><span class="d">'+(variant==="week"?niceH(date):(items.length?amt(items):''))+'</span></div>';
   let list;
   if(!items.length)list='<p class="empty">'+t("no_review")+'</p>';
   else if(variant==="adults")list='<div class="rows">'+items.map(it=>{const lv=A.lv[it[0]],str=lv&&lv.n?t("strength")+' '+lv.avg.toFixed(1):t("nolv");return '<button class="item row'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'"><span class="q">'+itemLabel(it)+'</span><span class="m">'+(it[2]-it[1]+1)+' '+t("ayah")+' · '+str+'</span></button>'}).join("")+'</div><span class="hint">'+t("tap_weak_self")+'</span>';
   else list='<div class="items">'+items.map(it=>'<button class="item'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'">'+itemLabel(it)+'</button>').join("")+'</div><span class="hint">'+(teacherMode?t("tweak"):variant==="teens"||k.self?t("tap_weak_self"):t(k.gender==="f"?"tap_weak_f":"tap_weak"))+'</span>';
   if(items.length)list+='<button class="btn small listen" data-listen>'+ICONS.play+t("listen")+'</button>';
+  if(isToday&&!teacherMode)list+='<div class="addrev makeup" hidden></div>';
   let html=head+(variant==="week"?'<div class="field"><div class="sec-t"><span>'+t("review")+'</span><span>'+(items.length?amt(items):'')+'</span></div>'+list+'</div>':list);
   const extras='<label class="field"><span class="sec-t">'+t("extra")+'</span><input data-f="extra" id="ex-'+date+'" autocomplete="off" placeholder="'+t("extra_ph")+'"></label>'+
-      '<div class="field"><span class="sec-t">'+t("newm")+'</span><div class="newrow"><select class="sel" data-f="nS" id="ns-'+date+'" aria-label="'+t("new_surah")+'">'+surahOptions(+r.nS||0)+'</select><input data-f="nF" id="nf-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input data-f="nT" id="nt-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div></div>'+
+      '<div class="field"><span class="sec-t">'+t("newm")+'</span><div class="newrow"><select class="sel" data-f="nS" id="ns-'+date+'" aria-label="'+t("new_surah")+'">'+surahOptions(+r.nS||0)+'</select><input data-f="nF" id="nf-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input data-f="nT" id="nt-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div><div class="addrev" hidden></div></div>'+
       '<label class="field"><span class="sec-t">'+t("notes")+'</span><textarea data-f="notes" id="no-'+date+'" rows="1"></textarea></label>';
   const teacherBox=(+(r.tStars||0)>0||r.tNotes||(r.tWeak||[]).length)?'<div class="other"><span>'+t("teacher_rating")+': '+(+(r.tStars||0)>0?starsRO(+r.tStars):t("not_rated"))+'</span>'+((r.tWeak||[]).length?'<span class="hint">'+t("mistake")+': '+r.tWeak.map(n=>esc(sName(n))).join("، ")+'</span>':'')+(r.tNotes?'<span class="hint">'+esc(r.tNotes)+'</span>':'')+'</div>':'';
   if(teacherMode){
@@ -294,8 +255,41 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
     html+=extras.split('<label class="field"><span class="sec-t">'+t("notes"))[0]+starRow("h",t("stars"))+teacherBox+'<label class="field"><span class="sec-t">'+t("notes")+'</span><textarea data-f="notes" id="no-'+date+'" rows="1"></textarea></label>';
   }
   el.innerHTML=html;
-  el.querySelectorAll("input[data-f],textarea[data-f]").forEach(inp=>{inp.value=r[inp.dataset.f]||"";let tm;inp.addEventListener("input",()=>{clearTimeout(tm);tm=setTimeout(()=>{let v=inp.value;if(inp.type==="number"){const n=+el.querySelector("[data-f=nS]").value;v=v===""?"":Math.max(1,Math.min(n?S[n-1][2]:286,Math.round(+v)||1));}setField(k,date,{[inp.dataset.f]:v})},500)})});
-  const sel=el.querySelector("select[data-f]");if(sel)sel.addEventListener("change",e=>{const v=+e.target.value||"";setField(k,date,{nS:v});if(v)el.querySelectorAll("input[type=number]").forEach(x=>x.max=S[v-1][2])});
+  el.querySelectorAll("input[data-f],textarea[data-f]").forEach(inp=>{inp.value=r[inp.dataset.f]||"";let tm;inp.addEventListener("input",()=>{clearTimeout(tm);tm=setTimeout(()=>{let v=inp.value;if(inp.type==="number"){const n=+el.querySelector("[data-f=nS]").value;v=v===""?"":Math.max(1,Math.min(n?S[n-1][2]:286,Math.round(+v)||1));}setField(k,date,{[inp.dataset.f]:v});askAdd()},500)})});
+  const sel=el.querySelector("select[data-f]");if(sel)sel.addEventListener("change",e=>{const v=+e.target.value||"";setField(k,date,{nS:v});askAdd();if(v)el.querySelectorAll("input[type=number]").forEach(x=>x.max=S[v-1][2])});
+  // after the parent logs new memorization, offer to add it to the review plan (own plan only: never over a teacher's plan, never from the child's device)
+  const askBox=el.querySelector(".addrev");
+  function askAdd(){
+    if(!askBox)return;askBox.hidden=true;askBox.innerHTML="";
+    const kk=ST.kids[k.id];if(teacherMode||childKid()||!kk||planHas((halaqaOf(kk)||{}).plan))return;
+    const rr=day(k,date)||{},n=+rr.nS,f=+rr.nF,to=+rr.nT;
+    if(!n||!(f>=1)||!(to>=f)||to>S[n-1][2])return;
+    const key=[k.id,date,n,f,to].join(":");
+    if(justAdded===key){askBox.hidden=false;askBox.innerHTML='<span>'+t("addrev_done")+'</span>';return}
+    if(planCovers(kk,n,f,to)||(prefs.noAdd||{})[key])return;
+    askBox.hidden=false;
+    askBox.innerHTML='<span>'+t("addrev_q",esc(sName(n)),f,to)+'</span><span class="row"><button type="button" class="btn small primary" data-y>'+t("addrev_yes")+'</button><button type="button" class="btn small" data-n>'+t("addrev_no")+'</button></span>';
+    askBox.querySelector("[data-y]").onclick=async()=>{quietUntil=Date.now()+900;justAdded=key;const np=planAdd(kk,n,f,to);
+      try{await D.saveKid(Object.assign({},kk,{surahs:np.surahs,ranges:np.ranges,start:weekOf(today())}))}catch(e){justAdded="";askBox.innerHTML='<span class="msg err">'+t("err_generic")+'</span>';return}
+      askAdd()};
+    askBox.querySelector("[data-n]").onclick=()=>{prefs.noAdd=prefs.noAdd||{};prefs.noAdd[key]=1;savePrefs();askBox.hidden=true};
+  }
+  askAdd();
+  // offer to make up a day missed in the last 3 days: its wird is added to today's items; the missed day keeps no stars
+  const mkBox=el.querySelector(".makeup");
+  function makeupOffer(){
+    if(!mkBox)return;mkBox.hidden=true;mkBox.innerHTML="";
+    const created=k.created?iso(new Date(k.created)):"";
+    for(let b=1;b<=3;b++){const md=addDays(date,-b);if(created&&md<created)break;
+      const mi=planFor(k,md),mr=day(k,md)||{},nm=b===1?t("yesterday"):DAYS[L()][parse(md).getDay()];
+      if(justMade===date+":"+md){mkBox.hidden=false;mkBox.innerHTML='<span>'+t("makeup_done",nm)+'</span>';return}
+      if(!mi.length||+(mr.stars||0)>0||mi.every(it=>planCovers({surahs:[],ranges:planFor(k,date)},it[0],it[1],it[2])))continue;
+      mkBox.hidden=false;
+      mkBox.innerHTML='<span>'+t("makeup_q",nm,amt(mi))+'</span><button type="button" class="btn small primary" data-mk>'+t("makeup_do")+'</button>';
+      mkBox.querySelector("[data-mk]").onclick=()=>{justMade=date+":"+md;setField(k,date,{items:mergeItems(planFor(k,date),mi)});makeupOffer()};
+      return}
+  }
+  makeupOffer();
   const lb=el.querySelector("[data-listen]");if(lb)lb.onclick=()=>openListen(items);
   el.querySelectorAll(".item").forEach(b=>b.onclick=()=>{const rr=day(k,date)||{},arr=(rr[weakKey]||[]).slice(),n=+b.dataset.s,ix=arr.indexOf(n);if(ix>-1)arr.splice(ix,1);else arr.push(n);setField(k,date,{[weakKey]:arr});b.classList.toggle("weak",ix<0);b.setAttribute("aria-pressed",String(ix<0))});
   const sKey=teacherMode?"tStars":"stars",row=el.querySelector(".stars");
@@ -304,6 +298,7 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   paint(row,+(r[sKey]||0));
   return el;
 }
+let justAdded="",justMade="";
 let afterRate=(k,w,i,v,cur,b)=>{if($("path"))renderPath(k,w);if(v>cur){burst(b);const st=$("st-"+i);if(st)st.classList.add("pulse")}};
 function renderDays(k,w,teacherMode){
   const box=$("days");box.innerHTML="";
@@ -365,7 +360,7 @@ function bindSlim(){
   if($("modeSeg"))$("modeSeg").querySelectorAll("button").forEach(b=>b.onclick=()=>{prefs.mode=b.dataset.m;savePrefs();go("main")});
   app.querySelectorAll(".tab[data-k]").forEach(b=>b.onclick=()=>{prefs.cur=b.dataset.k;selDay=null;savePrefs();go("main")});
 }
-function weekNav(w){const isCur=w===weekOf(today());return '<div class="weeknav"><button class="btn" id="wPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b></span><button class="btn" id="wNext">'+t("next")+'</button></div>'+(isCur?'':'<button class="btn accent" id="wNow" style="align-self:center">'+t("this_week")+'</button>')}
+function weekNav(w){const isCur=w===weekOf(today());return '<div class="weeknav"><button class="btn" id="wPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b>'+(hij(w)?'<small>'+hij(w)+' – '+hij(addDays(w,6))+'</small>':'')+'</span><button class="btn" id="wNext">'+t("next")+'</button></div>'+(isCur?'':'<button class="btn accent" id="wNow" style="align-self:center">'+t("this_week")+'</button>')}
 function bindWeekNav(w){$("wPrev").onclick=()=>{weekView=addDays(w,-7);selDay=null;render()};$("wNext").onclick=()=>{weekView=addDays(w,7);selDay=null;render()};if($("wNow"))$("wNow").onclick=()=>{weekView=null;selDay=null;render()}}
 function weekStrip(k,w,sel){
   let h='<div class="wstrip" role="tablist">';
@@ -399,7 +394,7 @@ function renderKids(k){
   app.innerHTML=slimTop(k)+
    '<div class="kidhead"><div class="kh-text"><span class="kh-hi">'+t("salam")+'</span><span class="kh-name">'+esc(k.name)+'</span><span class="kh-sub">'+sub+'</span></div><span class="starchip">'+ICONS.star+'<b>'+s.tot+'</b></span></div>'+
    '<div class="scenewrap" id="path">'+kidsScene(k,w,sel)+'</div>'+
-   '<p class="gift-note'+(s.done===7?" win":"")+'" id="giftNote">'+(s.done===7?t(k.gender==="f"?"win_f":"win_m",k.name):(7-s.done===1?t("left1"):7-s.done===2?t("left2"):t("leftN",7-s.done)))+'</p>'+
+   '<p class="gift-note'+(s.done===7?" win":"")+'" id="giftNote">'+(s.done===7?t(k.gender==="f"?"win_f":"win_m",k.name):(7-s.done===1?t("left1"):7-s.done===2?t("left2"):t("leftN",7-s.done)))+giftTail(k)+'</p>'+
    (h?'<p class="chipline">'+t("joined",esc(h.name))+'</p>':'')+
    weekNav(w)+'<div id="days" class="days"></div>'+demoNote()+bottomNav("main");
   $("days").appendChild(makeDayCard(k,sel,PATHPTS.length,w,false,"kids"));
@@ -413,7 +408,7 @@ function maybeCelebrate(k,w){
   let ayat=0;for(let i=0;i<7;i++){const d=addDays(w,i);ayat+=itemAyat(planFor(k,d))}
   const ov=document.createElement("div");ov.className="celebrate";ov.setAttribute("role","dialog");ov.setAttribute("aria-modal","true");
   ov.innerHTML='<div class="cel-in"><div class="confetti" aria-hidden="true">'+Array.from({length:18},(_,i)=>'<i style="--i:'+i+'"></i>').join("")+'</div><span class="cel-av">'+avatar(k.look||0,k.skin==null?1:k.skin,{happy:true})+'</span>'+giftSvg(true)+
-   '<h2>'+t(k.gender==="f"?"cel_title_f":"cel_title_m",esc(k.name))+'</h2><p>'+t(k.gender==="f"?"cel_sub_f":"cel_sub_m")+'</p>'+
+   '<h2>'+t(k.gender==="f"?"cel_title_f":"cel_title_m",esc(k.name))+'</h2><p>'+t(k.gender==="f"?"cel_sub_f":"cel_sub_m")+'</p>'+(k.gift?'<p class="cel-gift">'+t("gift_is",esc(k.gift))+'</p>':'')+
    '<div class="cel-stats"><span><b>'+s.tot+'</b>'+t("stars_lbl")+'</span><span><b>7/7</b>'+t("days_word")+'</span><span><b>'+ayat+'</b>'+t("ayah")+'</span></div><button class="btn accent big" id="celOk">'+t("open_gift")+'</button></div>';
   document.body.appendChild(ov);$("celOk").focus();$("celOk").onclick=()=>ov.remove();
 }
@@ -426,7 +421,7 @@ function teenStats(k){
   pts+=PTS_WEEK*fullWeeks+PTS_CHALLENGE*chDone;
   let clean=0;Object.keys(R).forEach(d=>{const r=R[d];if(+(r.stars||0)===3&&!(r.weak||[]).length&&!(r.tWeak||[]).length)clean+=itemAyat(r.items||planFor(k,d))});
   let best=A.best;
-  const p=effPlan(k),cov=juzCoverage(p.surahs||[]),juzDone=[];
+  const p=effPlan(k),cov=juzCoverage(p.surahs||[],p.ranges),juzDone=[];
   cov.forEach(c=>{if(c.frac===1){const ss=surahsOfJuz(c.juz);if(ss.every(n=>A.lv[n]&&(A.lv[n].level==="good"||A.lv[n].level==="mid")))juzDone.push(c.juz)}});
   return {pts,fullWeeks,clean,best,juzDone,A};
 }
@@ -455,13 +450,13 @@ function juzRing(cov){
 }
 function renderAdult(k){
   applyPalette(paletteFor(k));setMode("adults");_modeKid="adults";
-  const w=weekView||weekOf(today()),sel=pickDay(w),p=effPlan(k),cov=juzCoverage(p.surahs||[]),full=cov.filter(c=>c.frac>=1).length;
+  const w=weekView||weekOf(today()),sel=pickDay(w),p=effPlan(k),cov=juzCoverage(p.surahs||[],p.ranges),full=cov.filter(c=>c.frac>=1).length;
   const mem=cov.reduce((a,c)=>a+c.got,0),pct=Math.round(mem/6236*1000)/10,A=analyse(k);
   const rows=cov.filter(c=>c.got>0).sort((a,b)=>b.juz-a.juz).map(c=>{const ss=surahsOfJuz(c.juz).filter(n=>A.lv[n]&&A.lv[n].n);const avg=ss.length?ss.reduce((a,n)=>a+A.lv[n].avg,0)/ss.length:null;
     const col=avg==null?"var(--line)":avg>=2.5?"var(--good)":avg>=1.5?"var(--mid)":"var(--bad)";
     return '<span>'+t("juz_n",c.juz)+'</span><span class="sbar"><i style="width:'+(avg==null?0:Math.round(avg/3*100))+'%;background:'+col+'"></i></span><span class="m">'+(avg==null?'—':avg.toFixed(1))+'</span>'}).join("");
   app.innerHTML=slimTop(k)+
-   '<header class="ahead"><div class="row between ah-top"><span>'+DAYS[L()][parse(today()).getDay()]+'، '+nice(today())+'</span><span>'+esc(k.name)+'</span></div>'+
+   '<header class="ahead"><div class="row between ah-top"><span>'+DAYS[L()][parse(today()).getDay()]+'، '+niceH(today())+'</span><span>'+esc(k.name)+'</span></div>'+
    '<svg class="ring" viewBox="0 0 180 180" role="img" aria-label="'+t("juz_full_n",full)+'">'+juzRing(cov)+'<text x="90" y="86" text-anchor="middle" class="rnum">'+full+'</text><text x="90" y="110" text-anchor="middle" class="rsub">'+t("of_30")+'</text></svg>'+
    '<b class="ah-title">'+t("hifz_journey")+'</b><span class="ah-sub">'+t("memorized_pct",pct,mem)+'</span></header>'+
    weekNav(w)+weekStrip(k,w,sel)+'<div id="days" class="days"></div>'+
@@ -484,7 +479,7 @@ function analyse(k){
   const firstW=weekOf(dates[0]&&dates[0]<start?dates[0]:start),elapsed=Math.max(0,diffDays(firstW,today())+1);
   let best=0,run=0,prev=null;done.forEach(d=>{run=(prev&&addDays(prev,1)===d)?run+1:1;if(run>best)best=run;prev=d});
   const perWeek=[];for(let w=firstW;w<=curW;w=addDays(w,7)){const s=weekStats(k,w);perWeek.push({w,stars:s.tot,days:s.done})}
-  const pool={};(p.surahs||[]).forEach(n=>pool[n]=1);Object.keys(occ).forEach(n=>pool[n]=1);
+  const pool={};planUnits(p).forEach(u=>pool[u[0]]=1);Object.keys(occ).forEach(n=>pool[n]=1);
   const lv={};Object.keys(pool).map(Number).sort((a,b)=>a-b).forEach(n=>{const o=(occ[n]||[]).slice().sort((a,b)=>a.d<b.d?-1:1);
     if(!o.length){lv[n]={level:"none",n:0};return}
     const avg=o.reduce((a,x)=>a+x.score,0)/o.length,last2=o.slice(-2).some(x=>x.weak);
@@ -531,7 +526,7 @@ function renderTeachHome(){
   const hs=halaqaList();hs.forEach(h=>D.subStudents(h.id));const td=today();
   app.innerHTML=topbar()+'<h1 class="pagetitle">'+t("myhalaqas")+'</h1>'+
    hs.map(h=>{const st=Object.values(ST.students[h.id]||{}),dn=st.filter(k=>+((day(k,td)||{}).stars||0)>0).length;
-     return '<button class="card hcard" data-h="'+h.id+'"><span class="hrow"><b>'+esc(h.name)+'</b><span class="codechip" dir="ltr">'+esc(h.code)+'</span></span><span class="hint">'+t("students")+': '+st.length+' · '+t("today")+': '+t("done_n",dn,st.length)+'</span><span class="hint">'+(h.plan&&h.plan.surahs&&h.plan.surahs.length?t("plan")+': '+t("selected",h.plan.surahs.length)+' · '+cycleLbl(h.plan.cycle):t("plan_none"))+'</span></button>'}).join("")+
+     return '<button class="card hcard" data-h="'+h.id+'"><span class="hrow"><b>'+esc(h.name)+'</b><span class="codechip" dir="ltr">'+esc(h.code)+'</span></span><span class="hint">'+t("students")+': '+st.length+' · '+t("today")+': '+t("done_n",dn,st.length)+'</span><span class="hint">'+(planHas(h.plan)?t("plan")+': '+t("selected",planSurahCount(h.plan))+' · '+cycleLbl(h.plan.cycle):t("plan_none"))+'</span></button>'}).join("")+
    '<button class="btn accent" id="newH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button>'+demoNote();
   bindTop();
   app.querySelectorAll("[data-h]").forEach(b=>b.onclick=()=>{hDate=null;go("halaqa",{hid:b.dataset.h})});
@@ -557,7 +552,7 @@ function renderHalaqa(h){
    '<div class="row"><svg width="74" height="74" viewBox="0 0 74 74" role="img" aria-label="'+t("done_n",dn,all.length)+'"><circle cx="37" cy="37" r="30" fill="none" stroke="#0a3b33" stroke-width="8"/><circle cx="37" cy="37" r="30" fill="none" stroke="#d4a23a" stroke-width="8" stroke-dasharray="'+(C*frac).toFixed(1)+' '+C.toFixed(1)+'" stroke-linecap="round" transform="rotate(-90 37 37)"/><text x="37" y="42" text-anchor="middle" font-size="16" font-weight="700" fill="#fbf8f1">'+dn+'/'+all.length+'</text></svg>'+
    '<div class="col"><b>'+t("done_n",dn,all.length)+'</b><span class="hint lt">'+(P.summaryAt?t("summary_at_hint",P.summaryAt):t("summary_off"))+'</span><span class="msg ok lt" id="hCMsg"></span></div></div></header>'+
    '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn primary" id="hInv">'+t("invite")+'</button><button class="btn accent" id="hRepB">'+t("week_report")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
-   '<div class="weeknav"><button class="btn" id="dPrev">'+t("prev")+'</button><span class="lbl">'+DAYS[L()][parse(date).getDay()]+'<b>'+nice(date)+'</b></span><button class="btn" id="dNext">'+t("next")+'</button></div>'+
+   '<div class="weeknav"><button class="btn" id="dPrev">'+t("prev")+'</button><span class="lbl">'+DAYS[L()][parse(date).getDay()]+'<b>'+niceH(date)+'</b></span><button class="btn" id="dNext">'+t("next")+'</button></div>'+
    (date===td?'':'<button class="btn accent" id="dNow" style="align-self:center">'+t("today")+'</button>')+
    (oneW?'<section class="card"><div class="row between"><h2>'+t("today_wird")+'</h2><span class="hint">'+amt(oneW)+'</span></div><div class="items">'+oneW.map(it=>'<span class="item">'+itemLabel(it)+'</span>').join("")+'</div></section>':'')+
    '<section class="card"><div class="row between"><h2>'+t("students")+'</h2><div class="seg" id="hFil"><button data-v="all" aria-pressed="'+(hFilter==="all")+'">'+t("filter_all")+'</button><button data-v="not" aria-pressed="'+(hFilter==="not")+'">'+t("filter_not",notN)+'</button></div></div>'+
@@ -615,10 +610,11 @@ function renderSettings(){
    '<section class="card"><h2 class="sh">'+ICONS.bell+t("notif")+'</h2><button class="btn primary" id="nOn" style="align-self:flex-start">'+t("notif_on")+'</button><p class="msg" id="nMsg"></p>'+
     (ck?'':'<label class="field"><span class="sec-t">'+t("remind_at")+'</span><select id="remAt">'+timeOptions(P.remindAt||"")+'</select></label>'+(halaqaList().length?'<label class="field"><span class="sec-t">'+t("summary_at")+'</span><select id="sumAt">'+timeOptions(P.summaryAt||"")+'</select></label>':''))+'</section>'+
    (ck?'':
-   '<section class="card"><h2 class="sh">'+ICONS.people+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",(effPlan(k).surahs||[]).length)+' · '+cycleLbl(effPlan(k).cycle||1))+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.people+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",planSurahCount(effPlan(k)))+' · '+cycleLbl(effPlan(k).cycle||1))+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.book+t("myhalaqas")+'</h2>'+(halaqaList().length?halaqaList().map(h=>'<div class="kidrow"><span class="t"><b>'+esc(h.name)+'</b><small dir="ltr">'+esc(h.code)+'</small></span><button class="btn" data-he="'+h.id+'">'+t("edit_kid")+'</button></div>').join(""):'<p class="about">'+t("teach_t")+'</p>')+'<button class="btn accent" id="sAddH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.palette+t("appearance")+'</h2><p class="about">'+t("appearance_t")+'</p>'+paletteGrid("sPal",appTheme(),false)+'</section>'+
-   '<section class="card"><h2 class="sh">'+ICONS.globe+t("lang")+'</h2>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'</section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.globe+t("lang")+'</h2>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'<h3>'+t("hij_lbl")+'</h3>'+seg("sHij",[["0",t("hij_off")],["1",t("hij_on")]],ST.profile.hijri?"1":"0")+'<p class="hint">'+t("hij_t")+'</p></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.info+t("bk_title")+'</h2><p class="about">'+t("bk_t")+'</p><div class="row"><button class="btn" id="bkOut">'+t("bk_export")+'</button><button class="btn" id="bkIn">'+t("bk_import")+'</button></div><input type="file" id="bkFile" accept="application/json,.json" hidden><p class="msg" id="bkMsg"></p><div id="bkConf"></div></section>'+
    (hasLocal?'<section class="card"><button class="btn" id="imp">'+t("import_local")+'</button><p class="msg ok" id="impMsg"></p></section>':''))+
    '<section class="card"><h2 class="sh">'+ICONS.user+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><p class="hint">'+t("audio_src")+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
@@ -633,11 +629,31 @@ function renderSettings(){
   if($("sAdd"))$("sAdd").onclick=()=>openEdit(null);if($("sAddSelf"))$("sAddSelf").onclick=()=>openEdit(null,true);
   if($("sAddH"))$("sAddH").onclick=()=>openHEdit(null);
   if($("sLang"))$("sLang").querySelectorAll("button").forEach(b=>b.onclick=()=>{prefs.lang=b.dataset.v;savePrefs();D.saveProfile({lang:b.dataset.v});renderSettings()});
+  if($("sHij"))$("sHij").querySelectorAll("button").forEach(b=>b.onclick=()=>{D.saveProfile({hijri:b.dataset.v==="1"});renderSettings()});
   if($("sWs"))$("sWs").querySelectorAll("button").forEach(b=>b.onclick=()=>{D.saveProfile({weekStart:+b.dataset.v});renderSettings()});
   if($("sPal"))$("sPal").querySelectorAll(".pal").forEach(b=>b.onclick=()=>{prefs.appTheme=b.dataset.pal;savePrefs();D.saveProfile({appTheme:b.dataset.pal});renderSettings()});
   if($("imp"))$("imp").onclick=async()=>{const v=hasLocal;let n=0;for(const k of v.kids){const id=uid("k");await D.saveKid({id,name:k.name,gender:k.gender||"m",theme:k.theme||"space",surahs:k.surahs,cycle:k.cycle||1,light:k.light==null?5:k.light,weekStart:v.weekStart==null?6:v.weekStart,start:k.start,created:Date.now()+n,halaqaId:null,teacherUid:null});
       const R=(v.rec||{})[k.id]||{};for(const d of Object.keys(R))await D.setDay(id,d,R[d]);n++}
     D.saveProfile({imported:true});$("impMsg").textContent=t("imported",n);$("imp").disabled=true};
+  if($("bkOut")){
+    const bm=(txt,cls)=>{$("bkMsg").className="msg "+(cls||"");$("bkMsg").textContent=txt};
+    $("bkOut").onclick=()=>{const ks=kidsList();if(!ks.length){bm(t("bk_none"),"err");return}
+      const b=makeBackup(ks,ST.days),blob=new Blob([JSON.stringify(b,null,1)],{type:"application/json"}),a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);a.download="sahibi-backup-"+today()+".json";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+      bm(t("bk_saved",b.kids.length),"ok")};
+    $("bkIn").onclick=()=>$("bkFile").click();
+    $("bkFile").onchange=async e=>{const f=e.target.files[0];e.target.value="";$("bkConf").innerHTML="";if(!f)return;bm("");
+      if(f.size>MAX_FILE_BYTES){bm(t("bk_big"),"err");return}
+      let r;try{r=parseBackup(await f.text())}catch(x){r={ok:false,err:"bad"}}
+      if(!r.ok){bm(t(r.err==="big"?"bk_big":"bk_bad"),"err");return}
+      const nd=r.kids.reduce((a,x)=>a+Object.keys(x.days).length,0);
+      $("bkConf").innerHTML='<p class="about">'+t("bk_summary",r.kids.length,r.kids.map(x=>esc(x.kid.name)).join("، "),nd)+(r.dropped?' '+t("bk_dropped",r.dropped):'')+'</p><div class="row"><button class="btn primary" id="bkGo">'+t("bk_go")+'</button><button class="btn" id="bkNo">'+t("cancel")+'</button></div>';
+      $("bkNo").onclick=()=>{$("bkConf").innerHTML=""};
+      $("bkGo").onclick=async()=>{$("bkGo").disabled=true;bm(t("loading"));
+        try{let n=0;for(const x of r.kids){const id=uid("k");await D.saveKid(Object.assign({id,created:Date.now()+n},x.kid,{halaqaId:null,teacherUid:null}));
+            const ds=Object.keys(x.days);for(let i=0;i<ds.length;i+=20)await Promise.all(ds.slice(i,i+20).map(d=>D.setDay(id,d,x.days[d])));n++}
+          $("bkConf").innerHTML="";bm(t("bk_done",r.kids.length,nd),"ok")}catch(x){$("bkGo").disabled=false;bm(t("err_generic"),"err")}}};
+  }
   $("sOut").onclick=async()=>{gateOk=false;nav={view:"main"};await D.signOut()};
   let armed=false;if($("sDel"))$("sDel").onclick=async()=>{if(!armed){armed=true;$("sDel").className="btn warn";$("sDel").textContent=t("delacc2");return}
     try{await D.deleteAccount();gateOk=false;nav={view:"main"};render()}catch(e){$("sMsg").textContent=I[L()][e.code]?t(e.code):t("err_generic")}};
@@ -648,15 +664,24 @@ function planSection(d){
   return '<section class="card"><h3>'+t("memorized")+'</h3><div class="row"><span class="hint">'+t("presets")+'</span>'+["p30","p29","p2930","pall","pnone"].map(p=>'<button type="button" class="btn" data-p="'+p+'">'+t(p)+'</button>').join("")+'</div>'+
    '<label class="field"><input id="eSearch" type="search" placeholder="'+t("search")+'" autocomplete="off"></label><span class="hint" id="eCount"></span><div class="picker" id="ePick">'+
    range(1,114).map(n=>'<label class="pk" data-q="'+esc(S[n-1][0]+" "+S[n-1][1].toLowerCase()+" "+n)+'"><input type="checkbox" value="'+n+'"'+(d.surahs.indexOf(n)>-1?' checked':'')+'><span class="n">'+n+'</span><span class="q">'+esc(sName(n))+'</span><span class="a">'+S[n-1][2]+' '+t("ayah")+'</span></label>').join("")+'</div></section>'+
+   '<section class="card"><h3>'+t("ayat_pick")+'</h3><p class="about">'+t("ayat_pick_t")+'</p><div class="newrow rangerow"><select class="sel" id="rS" aria-label="'+t("new_surah")+'">'+surahOptions(0)+'</select><input id="rF" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input id="rT" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div><div class="row"><button type="button" class="btn" id="rAdd">'+t("ayat_add")+'</button></div><p class="msg err" id="rMsg"></p><div id="rList"></div></section>'+
    '<section class="card"><h3>'+t("cycle")+'</h3>'+seg("eCycle",[1,2,3,4,6,8,12].map(c=>[c,cycleLbl(c)]),d.cycle)+'<h3>'+t("light")+'</h3>'+seg("eLight",[[-1,t("none")]].concat(range(0,6).map(i=>[(WS()+i)%7,DAYS[L()][(WS()+i)%7]])),d.light)+'<div class="estimate" id="eEst"></div></section>';
 }
 function bindPlan(d){
-  const upd=()=>{$("eCount").textContent=t("selected",d.surahs.length);const tot=d.surahs.reduce((a,n)=>a+S[n-1][2],0),caps=7*d.cycle-(d.light>=0?0.5*d.cycle:0);$("eEst").innerHTML=d.surahs.length?t("est",Math.round(tot/caps),cycleLbl(d.cycle)):t("est0")};upd();
+  if(!d.ranges)d.ranges=[];
+  const drawRanges=()=>{d.ranges.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);$("rList").innerHTML=d.ranges.map((r,ix)=>'<div class="kidrow"><span class="t"><b>'+esc(sName(r[0]))+'</b><small>'+t("ayat_range",r[1],r[2])+'</small></span><button type="button" class="btn" data-rm="'+ix+'">'+t("ayat_rm")+'</button></div>').join("");
+    $("rList").querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{d.ranges.splice(+b.dataset.rm,1);drawRanges();upd()})};
+  const upd=()=>{$("eCount").textContent=t("selected",planSurahCount(d));const tot=planAyat(d),caps=7*d.cycle-(d.light>=0?0.5*d.cycle:0);$("eEst").innerHTML=planHas(d)?t("est",Math.round(tot/caps),cycleLbl(d.cycle)):t("est0")};upd();drawRanges();
+  $("rS").onchange=e=>{const n=+e.target.value;$("rF").max=$("rT").max=n?S[n-1][2]:"";$("rMsg").textContent=""};
+  $("rAdd").onclick=()=>{const n=+$("rS").value,f=Math.round(+$("rF").value),to=Math.round(+$("rT").value),msg=$("rMsg");msg.textContent="";
+    if(!n||!(f>=1)||!(to>=f)||to>S[n-1][2]){msg.textContent=t("ayat_bad",n?S[n-1][2]:286);return}
+    if(d.surahs.indexOf(n)>-1){msg.textContent=t("ayat_whole");return}
+    d.ranges=d.ranges.filter(r=>r[0]!==n);d.ranges.push([n,f,to]);$("rF").value=$("rT").value="";drawRanges();upd()};
   const segB=(id,f)=>$(id).querySelectorAll("button").forEach(b=>b.onclick=()=>{d[f]=+b.dataset.v;$(id).querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));upd()});
   segB("eCycle","cycle");segB("eLight","light");
-  const sync=()=>{$("ePick").querySelectorAll("input").forEach(c=>c.checked=d.surahs.indexOf(+c.value)>-1);upd()};
-  $("ePick").addEventListener("change",e=>{const n=+e.target.value;if(e.target.checked){if(d.surahs.indexOf(n)<0)d.surahs.push(n)}else d.surahs=d.surahs.filter(x=>x!==n);upd()});
-  app.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{const p=b.dataset.p,add=p==="p30"?range(78,114):p==="p29"?range(67,77):p==="p2930"?range(67,114):p==="pall"?range(1,114):null;if(!add)d.surahs=[];else add.forEach(n=>{if(d.surahs.indexOf(n)<0)d.surahs.push(n)});d.surahs.sort((a,b)=>a-b);sync()});
+  const sync=()=>{$("ePick").querySelectorAll("input").forEach(c=>c.checked=d.surahs.indexOf(+c.value)>-1);drawRanges();upd()};
+  $("ePick").addEventListener("change",e=>{const n=+e.target.value;if(e.target.checked){if(d.surahs.indexOf(n)<0)d.surahs.push(n);d.ranges=d.ranges.filter(r=>r[0]!==n);drawRanges()}else d.surahs=d.surahs.filter(x=>x!==n);upd()});
+  app.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{const p=b.dataset.p,add=p==="p30"?range(78,114):p==="p29"?range(67,77):p==="p2930"?range(67,114):p==="pall"?range(1,114):null;if(!add){d.surahs=[];d.ranges=[]}else add.forEach(n=>{if(d.surahs.indexOf(n)<0)d.surahs.push(n);d.ranges=d.ranges.filter(r=>r[0]!==n)});d.surahs.sort((a,b)=>a-b);sync()});
   $("eSearch").oninput=e=>{const q=e.target.value.trim().toLowerCase();$("ePick").querySelectorAll(".pk").forEach(r=>r.hidden=!!q&&r.dataset.q.indexOf(q)<0)};
 }
 
@@ -664,12 +689,12 @@ function bindPlan(d){
 function openEdit(id,self){
   const k=id?ST.kids[id]:null;
   draft=k?JSON.parse(JSON.stringify(k)):Object.assign({id:uid("k"),name:"",gender:"m",theme:"space",surahs:[],cycle:1,light:5,halaqaId:null,teacherUid:null,age:"",mode:null,self:false,look:0,skin:1,_new:true},self?{name:ST.profile.name||"",age:30,self:true}:{});
-  if(!draft.surahs)draft.surahs=[];go("edit");
+  if(!draft.surahs)draft.surahs=[];if(!draft.ranges)draft.ranges=[];go("edit");
 }
 function renderEdit(){
-  applyTheme(null);const d=draft,h=halaqaOf(d),tp=h&&h.plan&&h.plan.surahs&&h.plan.surahs.length;
+  applyTheme(null);const d=draft,h=halaqaOf(d),tp=h&&planHas(h.plan);
   app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t(d._new?"add_kid":"edit_kid")+'</span><button class="iconbtn" id="eBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div>'+
-   '<section class="card"><label class="field"><span class="sec-t">'+t("kid_name")+'</span><input id="eName" autocomplete="off" maxlength="30" value="'+esc(d.name)+'"></label>'+seg("eGender",[["m",t("boy")],["f",t("girl")]],d.gender)+'</section>'+
+   '<section class="card"><label class="field"><span class="sec-t">'+t("kid_name")+'</span><input id="eName" autocomplete="off" maxlength="30" value="'+esc(d.name)+'"></label>'+seg("eGender",[["m",t("boy")],["f",t("girl")]],d.gender)+(modeOf(d)==="kids"?'<label class="field"><span class="sec-t">'+t("gift_lbl")+'</span><input id="eGift" autocomplete="off" maxlength="60" placeholder="'+t("gift_ph")+'" value="'+esc(d.gift||"")+'"></label>':'')+'</section>'+
    '<section class="card"><div class="row"><label class="field" style="flex:0 0 7em"><span class="sec-t">'+t("age")+'</span><input id="eAge" type="number" inputmode="numeric" min="3" max="99" value="'+esc(d.age==null?"":d.age)+'"></label><label class="checkrow"><input type="checkbox" id="eSelf"'+(d.self?' checked':'')+'> '+t("self")+'</label></div><h3>'+t("ui_mode")+'</h3>'+seg("eMode",[["",t("m_auto")],["kids",t("m_kids")],["teens",t("m_teens")],["adults",t("m_adults")]],d.mode||"")+'</section>'+
    (modeOf(d)!=="adults"?'<section class="card"><h3>'+t("look")+'</h3><div class="looks" id="eLooks">'+LOOKS.map((lk,i)=>'<button type="button" class="lk" data-lk="'+i+'" aria-pressed="'+(i===(d.look||0))+'">'+avatar(i,d.skin==null?1:d.skin)+'<span>'+lk[L()]+'</span></button>').join("")+'</div><h3>'+t("skin")+'</h3><div class="row" id="eSkin">'+SKINS.map((c,i)=>'<button type="button" class="skin" data-sk="'+i+'" aria-pressed="'+(i===(d.skin==null?1:d.skin))+'" style="background:'+c+'" aria-label="'+(i+1)+'"></button>').join("")+'</div></section>':'')+
    (modeOf(d)!=="kids"?'<section class="card"><h3>'+t("profile_theme")+'</h3>'+paletteGrid("ePal",d.palette||"",true)+'</section>':'')+
@@ -680,6 +705,7 @@ function renderEdit(){
    (d._new?'':'<section class="card"><h3>'+t("childdev")+'</h3><p class="about">'+t("childdev_t")+'</p><button type="button" class="btn" id="cdSet" style="align-self:flex-start">'+t("childdev_set",esc(d.name))+'</button></section>')+
    '<p class="msg err" id="eMsg"></p><div class="row"><button class="btn primary big" id="eSave">'+t("save")+'</button><button class="btn big" id="eCancel">'+t("cancel")+'</button>'+(d._new?'':'<button class="btn big" id="eDel" style="margin-inline-start:auto">'+t("del")+'</button>')+'</div>';
   $("eName").oninput=e=>{d.name=e.target.value};
+  if($("eGift"))$("eGift").oninput=e=>{d.gift=e.target.value};
   if($("hCodeIn"))$("hCodeIn").oninput=e=>{d._code=e.target.value};
   $("eGender").querySelectorAll("button").forEach(b=>b.onclick=()=>{d.gender=b.dataset.v;renderEdit()});
   if($("eThemes"))$("eThemes").querySelectorAll(".th").forEach(b=>b.onclick=()=>{d.theme=b.dataset.th;$("eThemes").querySelectorAll(".th").forEach(x=>x.setAttribute("aria-pressed",String(x===b)))});
@@ -703,12 +729,12 @@ function renderEdit(){
     await D.deleteKid(d.id);if(prefs.child&&prefs.child.kid===d.id)prefs.child=null;if(prefs.cur===d.id)prefs.cur=null;savePrefs();draft=null;go("settings")};
 }
 async function saveDraft(quiet){
-  const d=draft;d.name=(d.name||"").trim();const h=halaqaOf(d),tp=h&&h.plan&&h.plan.surahs&&h.plan.surahs.length;
+  const d=draft;d.name=(d.name||"").trim();const h=halaqaOf(d),tp=h&&planHas(h.plan);
   if(!d.name){$("eMsg").textContent=t("name_req");return false}
-  if(!tp&&!d.surahs.length&&!quiet){$("eMsg").textContent=t("surah_req");return false}
+  if(!tp&&!planHas(d)&&!quiet){$("eMsg").textContent=t("surah_req");return false}
   const prev=ST.kids[d.id];
-  const changed=!prev||JSON.stringify([prev.surahs,prev.cycle,prev.light])!==JSON.stringify([d.surahs,d.cycle,d.light]);
-  const k={id:d.id,name:d.name,gender:d.gender,theme:d.theme,palette:d.palette||null,age:d.age===""?null:d.age,mode:d.mode||null,self:!!d.self,look:d.look||0,skin:d.skin==null?1:d.skin,surahs:d.surahs.slice().sort((a,b)=>a-b),cycle:d.cycle,light:d.light,weekStart:WS(),
+  const changed=!prev||JSON.stringify([prev.surahs,prev.ranges||[],prev.cycle,prev.light])!==JSON.stringify([d.surahs,d.ranges||[],d.cycle,d.light]);
+  const k={id:d.id,name:d.name,gender:d.gender,theme:d.theme,palette:d.palette||null,age:d.age===""?null:d.age,mode:d.mode||null,self:!!d.self,look:d.look||0,skin:d.skin==null?1:d.skin,gift:(d.gift||"").trim().slice(0,60),surahs:d.surahs.slice().sort((a,b)=>a-b),ranges:(d.ranges||[]).map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d.cycle,light:d.light,weekStart:WS(),
     start:changed?weekOf(today()):(prev.start||weekOf(today())),created:prev&&prev.created||Date.now(),halaqaId:prev?prev.halaqaId||null:null,teacherUid:prev?prev.teacherUid||null:null};
   await D.saveKid(k);d._new=false;return true;
 }
@@ -718,8 +744,9 @@ function newCode(){const A="ABCDEFGHJKMNPQRSTUVWXYZ23456789";let s="";for(let i=
 function openHEdit(id){
   const h=id?ST.halaqas[id]:null;
   draft=h?JSON.parse(JSON.stringify(h)):{id:uid("h"),name:"",teacherName:ST.profile.name||"",plan:null,_new:true};
-  draft._usePlan=!!(draft.plan&&draft.plan.surahs&&draft.plan.surahs.length);
-  draft._p=draft.plan?JSON.parse(JSON.stringify(draft.plan)):{surahs:[],cycle:1,light:5};
+  draft._usePlan=planHas(draft.plan);
+  draft._p=draft.plan?JSON.parse(JSON.stringify(draft.plan)):{surahs:[],ranges:[],cycle:1,light:5};
+  if(!draft._p.ranges)draft._p.ranges=[];
   go("hedit");
 }
 function renderHEdit(){
@@ -735,10 +762,10 @@ function renderHEdit(){
   const leave=()=>{const id=d.id,isNew=d._new;draft=null;if(!isNew&&ST.halaqas[id])go("halaqa",{hid:id});else go(gateOk?"settings":"main")};
   $("eBack").onclick=leave;$("eCancel").onclick=leave;
   $("eSave").onclick=async()=>{d.name=d.name.trim();if(!d.name){$("eMsg").textContent=t("name_req");return}
-    if(d._usePlan&&!d._p.surahs.length){$("eMsg").textContent=t("surah_req");return}
+    if(d._usePlan&&!planHas(d._p)){$("eMsg").textContent=t("surah_req");return}
     $("eSave").disabled=true;
     try{let code=d.code;if(!code){for(let i=0;i<5;i++){code=newCode();if(!(await D.codeTaken(code)))break}}
-      const prev=d.plan,np=d._usePlan?{surahs:d._p.surahs.slice().sort((a,b)=>a-b),cycle:d._p.cycle,light:d._p.light,weekStart:WS(),start:prev&&JSON.stringify([prev.surahs,prev.cycle,prev.light])===JSON.stringify([d._p.surahs,d._p.cycle,d._p.light])?prev.start:weekOf(today())}:null;
+      const prev=d.plan,np=d._usePlan?{surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,light:d._p.light,weekStart:WS(),start:prev&&JSON.stringify([prev.surahs,prev.ranges||[],prev.cycle,prev.light])===JSON.stringify([d._p.surahs,d._p.ranges,d._p.cycle,d._p.light])?prev.start:weekOf(today())}:null;
       await D.saveHalaqa({id:d.id,name:d.name,teacherName:(d.teacherName||"").trim(),code,plan:np,created:d.created||Date.now()});
       if(!ST.profile.name&&d.teacherName)D.saveProfile({name:d.teacherName.trim()});
       prefs.mode="teach";savePrefs();const id=d.id;draft=null;hDate=null;go("halaqa",{hid:id});
