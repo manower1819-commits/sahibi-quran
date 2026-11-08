@@ -140,13 +140,14 @@ service cloud.firestore {
         function isParent() { return isParentOf(k()); }
         function isTeacher() { return k().get('teacherUid', null) == me(); }
         function homeKeys() { return ['items', 'stars', 'weak', 'extra', 'nS', 'nF', 'nT', 'notes', 'pw']; }
-        function classKeys() { return ['items', 'tStars', 'tWeak', 'tNotes']; }
+        function classKeys() { return ['items', 'tStars', 'tWeak', 'tNotes', 'tpw']; }
         function changed() {
           return resource == null ? request.resource.data.keys() : request.resource.data.diff(resource.data).affectedKeys();
         }
         allow read: if signedIn() && (isParent() || isTeacher());
         // Home rating belongs to the family; class rating belongs to the teacher.
-        allow create, update: if signedIn() && (
+        function pageList(key) { return request.resource.data.get(key, []) is list && request.resource.data.get(key, []).size() <= 604; }
+        allow create, update: if signedIn() && pageList('pw') && pageList('tpw') && (
           (isParent() && changed().hasOnly(homeKeys())) ||
           (isTeacher() && changed().hasOnly(classKeys())));
         allow delete: if signedIn() && isParent();

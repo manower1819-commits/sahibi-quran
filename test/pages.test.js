@@ -55,3 +55,9 @@ test("pageStrugglers: needs the same page on at least 2 different days inside th
   assert.deepEqual(pageStrugglers({"2026-11-07": {pw: [0, 605, 1.5, "x", null]}}, "2026-11-07", {min: 1}), [], "bad page numbers are ignored");
   assert.deepEqual(pageStrugglers({"2026-11-06": {pw: [5]}}, "2026-11-07", {min: 1}), [{page: 5, count: 1, last: "2026-11-06"}]);
 });
+
+test("pageStrugglers: a teacher's page marks count too, and one day counts once per page whoever marked it", () => {
+  const days = {"2026-11-01": {tpw: [42]}, "2026-11-05": {pw: [42]}, "2026-11-06": {pw: [7], tpw: [7]}};
+  assert.deepEqual(pageStrugglers(days, "2026-11-07"), [{page: 42, count: 2, last: "2026-11-05"}], "42: teacher on one day + parent on another; 7: both on the same day = one day only");
+  assert.deepEqual(pageStrugglers({"2026-11-05": {tpw: "x"}, "2026-11-06": {tpw: null}}, "2026-11-07", {min: 1}), [], "bad shapes are ignored");
+});

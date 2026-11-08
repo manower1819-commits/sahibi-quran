@@ -292,6 +292,23 @@ test("Firestore itself refuses an array inside an array (how the app builds day 
   try { await setDoc(doc(db(A), "kids/k1/days/2026-11-10"), {stars: 1, items: [[112, 1, 4]]}, {merge: true}); } catch (e) { msg = String(e.message); }
   if (!/Nested arrays are not supported/.test(msg)) throw new Error("expected the SDK to refuse nested arrays, got: " + msg);
 });
+test("days: the teacher marks pages (tpw) on their own key; neither side can write the other's page marks", async () => {
+  await seed(d => updateDoc(doc(d, "kids/k1"), {halaqaId: "hT", teacherUid: T}));
+  await assertSucceeds(setDoc(doc(db(T), "kids/k1/days/2026-11-08"), {tStars: 2, tpw: [583, 584]}));
+  await assertFails(setDoc(doc(db(T), "kids/k1/days/2026-11-09"), {pw: [583]}), "the parent's key");
+  await assertSucceeds(setDoc(doc(db(A), "kids/k1/days/2026-11-10"), {stars: 1, pw: [583]}));
+  await assertFails(setDoc(doc(db(A), "kids/k1/days/2026-11-11"), {tpw: [583]}), "the teacher's key");
+  await assertFails(setDoc(doc(db(U), "kids/k1/days/2026-11-12"), {tpw: [583]}), "another teacher");
+});
+test("days: page lists must be lists of at most 604 entries (what is stored is later displayed to the other side)", async () => {
+  await seed(d => updateDoc(doc(d, "kids/k1"), {halaqaId: "hT", teacherUid: T}));
+  await assertFails(setDoc(doc(db(A), "kids/k1/days/2026-11-20"), {pw: "<img src=x onerror=alert(1)>"}), "a string is not a list");
+  await assertFails(setDoc(doc(db(A), "kids/k1/days/2026-11-21"), {pw: Array.from({length: 605}, (_, i) => i + 1)}), "too long");
+  await assertFails(setDoc(doc(db(T), "kids/k1/days/2026-11-22"), {tpw: "x"}));
+  await assertFails(setDoc(doc(db(T), "kids/k1/days/2026-11-23"), {tpw: Array.from({length: 605}, (_, i) => i + 1)}));
+  await assertSucceeds(setDoc(doc(db(A), "kids/k1/days/2026-11-24"), {pw: Array.from({length: 604}, (_, i) => i + 1)}));
+  await assertSucceeds(setDoc(doc(db(A), "kids/k1/days/2026-11-25"), {stars: 2}), "days without page lists are untouched");
+});
 test("days: the parent writes home keys, including pw, and nothing else", async () => {
   await assertSucceeds(setDoc(doc(db(A), "kids/k1/days/2026-11-08"), {stars: 1, weak: [112], pw: [42], notes: "n", items: [112, 1, 4]}));
   await assertFails(setDoc(doc(db(A), "kids/k1/days/2026-11-09"), {stars: 1, junk: 1}));
