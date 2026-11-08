@@ -4,10 +4,19 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function me() { return request.auth.uid; }
     function halaqa(id) { return get(/databases/$(database)/documents/halaqas/$(id)).data; }
-    // A kid may point at a teacher only through that teacher's real class.
-    function teacherLinkOk(d) {
+    // Parents of a child: the owner (parentUid) and any co-parents (parentUids) who joined with the owner's invite.
+    function isParentOf(d) { return d.parentUid == me() || me() in d.get('parentUids', []); }
+    // An approval (halaqas/{hid}/requests/{kidId}, status 'approved') is good for 7 days from the moment the server recorded it.
+    function approved(hid, kidId) {
+      let r = get(/databases/$(database)/documents/halaqas/$(hid)/requests/$(kidId)).data;
+      return r.status == 'approved' && r.decidedAt > request.time - duration.value(7, 'd');
+    }
+    // A child may point at a class only after that class's teacher approved the request.
+    function linkOk(d, kidId) {
       return d.get('teacherUid', null) == null
-        || (d.get('halaqaId', null) != null && halaqa(d.halaqaId).teacherUid == d.teacherUid);
+        || (d.get('halaqaId', null) != null
+            && halaqa(d.halaqaId).teacherUid == d.teacherUid
+            && approved(d.halaqaId, kidId));
     }
 
     // Parent/teacher profile (reminder times, device tokens). Owner only.
@@ -15,12 +24,59 @@ service cloud.firestore {
       allow read, write: if signedIn() && me() == uid;
     }
 
-    // Classes: anyone signed in may look one up by its code; only its teacher changes it.
+    // Class code -> class id. Looking up one code is allowed; listing the codes is not.
+    match /halaqaCodes/{code} {
+      allow get: if signedIn();
+      allow create: if signedIn() && code.matches('[A-Z0-9]{4,12}')
+                    && request.resource.data.keys().hasOnly(['hid', 'teacherUid'])
+                    && request.resource.data.teacherUid == me()
+                    && halaqa(request.resource.data.hid).teacherUid == me();
+      allow delete: if signedIn() && resource.data.teacherUid == me();
+    }
+
+    // Classes: one class can be read by anyone signed in who knows its id (members and people who looked up its code),
+    // but classes cannot be listed except by their own teacher. Only the teacher changes a class.
     match /halaqas/{hid} {
-      allow read: if signedIn();
+      allow get: if signedIn();
+      allow list: if signedIn() && resource.data.teacherUid == me();
       allow create: if signedIn() && request.resource.data.teacherUid == me();
       allow update: if signedIn() && resource.data.teacherUid == me() && request.resource.data.teacherUid == me();
       allow delete: if signedIn() && resource.data.teacherUid == me();
+
+      // Join requests: a parent asks, only the class's teacher decides.
+      match /requests/{kidId} {
+        allow read: if signedIn() && (resource == null || halaqa(hid).teacherUid == me() || resource.data.parentUid == me());
+        allow create: if signedIn()
+                      && request.resource.data.keys().hasOnly(['kidId', 'parentUid', 'teacherUid', 'kidName', 'status', 'at'])
+                      && request.resource.data.kidId == kidId
+                      && request.resource.data.parentUid == me()
+                      && request.resource.data.teacherUid == halaqa(hid).teacherUid
+                      && request.resource.data.status == 'pending'
+                      && request.resource.data.kidName is string && request.resource.data.kidName.size() <= 30
+                      && isParentOf(get(/databases/$(database)/documents/kids/$(kidId)).data);
+        allow update: if signedIn() && halaqa(hid).teacherUid == me()
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedAt'])
+                      && request.resource.data.decidedAt == request.time
+                      && request.resource.data.status in ['approved', 'rejected'];
+        allow delete: if signedIn() && (halaqa(hid).teacherUid == me() || resource.data.parentUid == me());
+      }
+    }
+
+    // Co-parent invites: the owner creates one (kids/{id}.inviteCode points at it); whoever holds the code may claim it once.
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow create: if signedIn() && code.matches('[A-Z0-9]{8}')
+                    && request.resource.data.keys().hasOnly(['kidId', 'ownerUid', 'exp', 'claimedBy'])
+                    && request.resource.data.ownerUid == me()
+                    && request.resource.data.get('claimedBy', null) == null
+                    && request.resource.data.exp is number
+                    && get(/databases/$(database)/documents/kids/$(request.resource.data.kidId)).data.parentUid == me();
+      allow update: if signedIn()
+                    && resource.data.get('claimedBy', null) == null
+                    && resource.data.exp > request.time.toMillis()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimedBy'])
+                    && request.resource.data.claimedBy == me();
+      allow delete: if signedIn() && (resource.data.ownerUid == me() || resource.data.get('claimedBy', null) == me());
     }
 
     // Teacher's "Remind" taps wait here; the scheduled job sends them and deletes them.
@@ -31,21 +87,45 @@ service cloud.firestore {
     }
 
     match /kids/{kid} {
-      allow read: if signedIn() && (resource.data.parentUid == me() || resource.data.get('teacherUid', null) == me());
-      allow create: if signedIn() && request.resource.data.parentUid == me() && teacherLinkOk(request.resource.data);
-      allow update: if signedIn() && resource.data.parentUid == me()
-                    && request.resource.data.parentUid == me()
+      allow read: if signedIn() && (isParentOf(resource.data) || resource.data.get('teacherUid', null) == me());
+      // A new child belongs only to its creator, and may only point at a class that approved it.
+      allow create: if signedIn() && request.resource.data.parentUid == me()
+                    && request.resource.data.get('parentUids', [me()]).hasOnly([me()])
+                    && linkOk(request.resource.data, kid);
+      // Owner and co-parents may edit the child. Ownership never moves; a co-parent can only remove people from parentUids.
+      allow update: if signedIn() && isParentOf(resource.data)
+                    && request.resource.data.parentUid == resource.data.parentUid
+                    && (resource.data.parentUid == me()
+                        ? request.resource.data.get('parentUids', [resource.data.parentUid]).hasAny([me()])
+                        : request.resource.data.get('parentUids', []).toSet().difference(resource.data.get('parentUids', []).toSet()).size() == 0)
                     && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['halaqaId', 'teacherUid'])
-                        || teacherLinkOk(request.resource.data));
-      // The teacher can only take a student out of the class.
+                        || linkOk(request.resource.data, kid));
+      // A co-parent joins: the child names an invite that this user has claimed. Only parentUids/parentNames change,
+      // and only this user is added (and may add their own display name).
+      allow update: if signedIn() && !isParentOf(resource.data)
+                    && resource.data.get('inviteCode', null) != null
+                    && get(/databases/$(database)/documents/invites/$(resource.data.inviteCode)).data.claimedBy == me()
+                    && get(/databases/$(database)/documents/invites/$(resource.data.inviteCode)).data.kidId == kid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parentUids', 'parentNames'])
+                    && request.resource.data.parentUids.hasAll(resource.data.get('parentUids', [resource.data.parentUid]))
+                    && request.resource.data.parentUids.toSet().difference(resource.data.get('parentUids', [resource.data.parentUid]).toSet()).hasOnly([me()])
+                    && request.resource.data.get('parentNames', {}).diff(resource.data.get('parentNames', {})).affectedKeys().hasOnly([me()]);
+      // The teacher can take a student out of the class, or put an approved, currently unassigned child into it.
       allow update: if signedIn() && resource.data.get('teacherUid', null) == me()
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['halaqaId', 'teacherUid'])
                     && request.resource.data.get('teacherUid', null) == null;
+      allow update: if signedIn() && resource.data.get('teacherUid', null) == null
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['halaqaId', 'teacherUid'])
+                    && request.resource.data.get('teacherUid', null) == me()
+                    && request.resource.data.get('halaqaId', null) != null
+                    && halaqa(request.resource.data.halaqaId).teacherUid == me()
+                    && approved(request.resource.data.halaqaId, kid);
+      // Only the owner deletes a child.
       allow delete: if signedIn() && resource.data.parentUid == me();
 
       match /days/{date} {
         function k() { return get(/databases/$(database)/documents/kids/$(kid)).data; }
-        function isParent() { return k().parentUid == me(); }
+        function isParent() { return isParentOf(k()); }
         function isTeacher() { return k().get('teacherUid', null) == me(); }
         function homeKeys() { return ['items', 'stars', 'weak', 'extra', 'nS', 'nF', 'nT', 'notes', 'pw']; }
         function classKeys() { return ['items', 'tStars', 'tWeak', 'tNotes']; }

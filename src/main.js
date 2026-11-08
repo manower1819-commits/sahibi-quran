@@ -188,8 +188,9 @@ function starsRO(n){let s="";for(let i=1;i<=3;i++)s+=i<=n?"★":"☆";return '<s
 function renderWelcome(){
   applyTheme(null);
   app.innerHTML=topbar()+'<section class="stack welcome"><span class="logo">'+LOGO+'</span><h1>'+t("app")+'</h1><p>'+t("tag")+'</p><h2 class="who">'+t("start_who")+'</h2><div class="langpick"><button class="btn primary big" id="first">'+t("for_child")+'</button><button class="btn accent big" id="firstSelf">'+t("for_me")+'</button></div></section>'+
-   '<section class="card"><h2>'+t("teach")+'</h2><p class="about">'+t("teach_t")+'</p><button class="btn accent" id="firstH" style="align-self:flex-start">'+t("new_halaqa")+'</button></section>'+demoNote();
-  bindTop();$("first").onclick=()=>openEdit(null);$("firstSelf").onclick=()=>openEdit(null,true);$("firstH").onclick=()=>openHEdit(null);
+   '<section class="card"><h2>'+t("teach")+'</h2><p class="about">'+t("teach_t")+'</p><button class="btn accent" id="firstH" style="align-self:flex-start">'+t("new_halaqa")+'</button></section>'+
+   '<section class="card"><h2>'+t("co_join_t")+'</h2><p class="about">'+t("co_join_p")+'</p><button class="btn" id="firstCo" style="align-self:flex-start">'+t("co_join_go")+'</button></section>'+demoNote();
+  bindTop();$("firstCo").onclick=()=>openSettings();$("first").onclick=()=>openEdit(null);$("firstSelf").onclick=()=>openEdit(null,true);$("firstH").onclick=()=>openHEdit(null);
 }
 const demoNote=()=>D.kind==="demo"?'<p class="status">'+t("demo_note")+'</p>':'';
 
@@ -417,7 +418,7 @@ function renderKids(k){
    '<div class="kidhead"><div class="kh-text"><span class="kh-hi">'+t("salam")+'</span><span class="kh-name">'+esc(k.name)+'</span><span class="kh-sub">'+sub+'</span></div><span class="starchip">'+ICONS.star+'<b>'+s.tot+'</b></span></div>'+
    '<div class="scenewrap" id="path">'+kidsScene(k,w,sel)+'</div>'+
    '<p class="gift-note'+(s.done===7?" win":"")+'" id="giftNote">'+(s.done===7?t(k.gender==="f"?"win_f":"win_m",k.name):(7-s.done===1?t("left1"):7-s.done===2?t("left2"):t("leftN",7-s.done)))+giftTail(k)+'</p>'+
-   (h?'<p class="chipline">'+t("joined",esc(h.name))+'</p>':'')+
+   (h?'<p class="chipline">'+t("joined",esc(h.name))+'</p>':(ST.joins[k.id]||{}).status==="pending"?'<p class="chipline">'+t("join_pending",esc(ST.joins[k.id].name))+'</p>':'')+
    weekNav(w)+'<div id="days" class="days"></div>'+demoNote()+bottomNav("main");
   $("days").appendChild(makeDayCard(k,sel,PATHPTS.length,w,false,"kids"));
   afterRate=(kk,ww,i,v,cur,b)=>{$("path").innerHTML=kidsScene(kk,ww,sel);bindScene(kk,ww);if(v>cur)burst(b);maybeCelebrate(kk,ww)};
@@ -548,7 +549,7 @@ function renderTeachHome(){
   const hs=halaqaList();hs.forEach(h=>D.subStudents(h.id));const td=today();
   app.innerHTML=topbar()+'<h1 class="pagetitle">'+t("myhalaqas")+'</h1>'+
    hs.map(h=>{const st=Object.values(ST.students[h.id]||{}),dn=st.filter(k=>+((day(k,td)||{}).stars||0)>0).length;
-     return '<button class="card hcard" data-h="'+h.id+'"><span class="hrow"><b>'+esc(h.name)+'</b><span class="codechip" dir="ltr">'+esc(h.code)+'</span></span><span class="hint">'+t("students")+': '+st.length+' · '+t("today")+': '+t("done_n",dn,st.length)+'</span><span class="hint">'+(planHas(h.plan)?t("plan")+': '+t("selected",planSurahCount(h.plan))+' · '+cycleLbl(h.plan.cycle):t("plan_none"))+'</span></button>'}).join("")+
+     return '<button class="card hcard" data-h="'+h.id+'"><span class="hrow"><b>'+esc(h.name)+'</b><span class="codechip" dir="ltr">'+esc(h.code)+'</span></span><span class="hint">'+t("students")+': '+st.length+' · '+t("today")+': '+t("done_n",dn,st.length)+'</span>'+((ST.requests[h.id]||[]).length?'<span class="hint warnc">'+t("req_n",(ST.requests[h.id]||[]).length)+'</span>':'')+'<span class="hint">'+(planHas(h.plan)?t("plan")+': '+t("selected",planSurahCount(h.plan))+' · '+cycleLbl(h.plan.cycle):t("plan_none"))+'</span></button>'}).join("")+
    '<button class="btn accent" id="newH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button>'+demoNote();
   bindTop();
   app.querySelectorAll("[data-h]").forEach(b=>b.onclick=()=>{hDate=null;go("halaqa",{hid:b.dataset.h})});
@@ -576,6 +577,7 @@ function renderHalaqa(h){
    '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn primary" id="hInv">'+t("invite")+'</button><button class="btn accent" id="hRepB">'+t("week_report")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
    '<div class="weeknav"><button class="btn" id="dPrev">'+t("prev")+'</button><span class="lbl">'+DAYS[L()][parse(date).getDay()]+'<b>'+niceH(date)+'</b></span><button class="btn" id="dNext">'+t("next")+'</button></div>'+
    (date===td?'':'<button class="btn accent" id="dNow" style="align-self:center">'+t("today")+'</button>')+
+   ((ST.requests[h.id]||[]).length?'<section class="card"><h2>'+t("req_t")+'</h2><ul class="list">'+(ST.requests[h.id]||[]).map(r=>'<li class="kidrow"><span class="t"><b>'+esc(r.kidName||"")+'</b></span><span class="row"><button class="btn small primary" data-ap="'+esc(r.id)+'">'+t("req_ok")+'</button><button class="btn small" data-rj="'+esc(r.id)+'">'+t("req_no")+'</button></span></li>').join("")+'</ul><p class="msg" id="rqMsg"></p></section>':'')+
    (oneW?'<section class="card"><div class="row between"><h2>'+t("today_wird")+'</h2><span class="hint">'+amt(oneW)+'</span></div><div class="items">'+oneW.map(it=>'<span class="item">'+itemLabel(it)+'</span>').join("")+'</div></section>':'')+
    '<section class="card"><div class="row between"><h2>'+t("students")+'</h2><div class="seg" id="hFil"><button data-v="all" aria-pressed="'+(hFilter==="all")+'">'+t("filter_all")+'</button><button data-v="not" aria-pressed="'+(hFilter==="not")+'">'+t("filter_not",notN)+'</button></div></div>'+
    (all.length?'<ul class="list srows">'+st.map(k=>{const r=day(k,date)||{},hs=+(r.stars||0),ok=hs>0;
@@ -589,6 +591,10 @@ function renderHalaqa(h){
   app.querySelectorAll("[data-rm]").forEach(b=>{let armed=false;b.onclick=async()=>{if(!armed){armed=true;b.className="btn small warn";b.textContent=t("rm_confirm");return}
     b.disabled=true;await D.removeStudent(b.dataset.rm);delete (ST.students[h.id]||{})[b.dataset.rm];render()}});
   $("hCopy").onclick=()=>copyText(h.code,$("hCMsg"));
+  app.querySelectorAll("[data-ap],[data-rj]").forEach(b=>b.onclick=async()=>{const ok=!!b.dataset.ap,id=b.dataset.ap||b.dataset.rj,rq=(ST.requests[h.id]||[]).find(x=>x.id===id);
+    app.querySelectorAll("[data-ap],[data-rj]").forEach(x=>x.disabled=true);
+    try{const r=await D.decideJoin(h.id,id,ok);render();const el=$("hCMsg");if(el)el.textContent=ok?t(r.linked?"req_done_ok":"req_done_wait",(rq&&rq.kidName)||""):t("req_done_no")}
+    catch(e){app.querySelectorAll("[data-ap],[data-rj]").forEach(x=>x.disabled=false);const el=$("rqMsg");if(el){el.className="msg err";el.textContent=t("err_generic")}}});
   $("hFil").querySelectorAll("button").forEach(b=>b.onclick=()=>{hFilter=b.dataset.v;render()});
   $("dPrev").onclick=()=>{hDate=addDays(date,-1);render()};$("dNext").onclick=()=>{hDate=addDays(date,1);render()};
   if($("dNow"))$("dNow").onclick=()=>{hDate=null;render()};
@@ -632,7 +638,8 @@ function renderSettings(){
    '<section class="card"><h2 class="sh">'+ICONS.bell+t("notif")+'</h2><button class="btn primary" id="nOn" style="align-self:flex-start">'+t("notif_on")+'</button><p class="msg" id="nMsg"></p>'+
     (ck?'':'<label class="field"><span class="sec-t">'+t("remind_at")+'</span><select id="remAt">'+timeOptions(P.remindAt||"")+'</select></label>'+(halaqaList().length?'<label class="field"><span class="sec-t">'+t("summary_at")+'</span><select id="sumAt">'+timeOptions(P.summaryAt||"")+'</select></label>':''))+'</section>'+
    (ck?'':
-   '<section class="card"><h2 class="sh">'+ICONS.people+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",planSurahCount(effPlan(k)))+' · '+cycleLbl(effPlan(k).cycle||1))+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.people+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",planSurahCount(effPlan(k)))+' · '+cycleLbl(effPlan(k).cycle||1))+((ST.joins[k.id]||{}).status==="pending"?' · '+t("join_pending_short"):'')+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.people+t("co_join_t")+'</h2><p class="about">'+t("co_join_p")+'</p><div class="row"><input id="coCode" class="codein" dir="ltr" maxlength="8" placeholder="'+t("co_code")+'" autocomplete="off"><button class="btn primary" id="coGo">'+t("co_join")+'</button></div><p class="msg" id="coJMsg"></p></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.book+t("myhalaqas")+'</h2>'+(halaqaList().length?halaqaList().map(h=>'<div class="kidrow"><span class="t"><b>'+esc(h.name)+'</b><small dir="ltr">'+esc(h.code)+'</small></span><button class="btn" data-he="'+h.id+'">'+t("edit_kid")+'</button></div>').join(""):'<p class="about">'+t("teach_t")+'</p>')+'<button class="btn accent" id="sAddH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.palette+t("appearance")+'</h2><p class="about">'+t("appearance_t")+'</p>'+paletteGrid("sPal",appTheme(),false)+'</section>'+
    '<section class="card"><h2 class="sh">'+ICONS.globe+t("lang")+'</h2>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'<h3>'+t("hij_lbl")+'</h3>'+seg("sHij",[["0",t("hij_off")],["1",t("hij_on")]],ST.profile.hijri?"1":"0")+'<p class="hint">'+t("hij_t")+'</p></section>'+
@@ -648,6 +655,9 @@ function renderSettings(){
   if($("sumAt"))$("sumAt").onchange=e=>D.saveProfile({summaryAt:e.target.value||null,summaryUtc:toUtcSlot(e.target.value),offset:off});
   app.querySelectorAll("[data-ed]").forEach(b=>b.onclick=()=>openEdit(b.dataset.ed));
   app.querySelectorAll("[data-he]").forEach(b=>b.onclick=()=>openHEdit(b.dataset.he));
+  if($("coGo"))$("coGo").onclick=async()=>{const code=$("coCode").value.trim().toUpperCase(),msg=$("coJMsg");if(!code)return;$("coGo").disabled=true;msg.className="msg";msg.textContent="";
+    try{const r=await D.redeemCoInvite(code);if(r.err){msg.className="msg err";msg.textContent=t({notfound:"co_bad",expired:"co_expired",used:"co_used"}[r.err]||"err_generic");$("coGo").disabled=false;return}
+      msg.className="msg ok";msg.textContent=t("co_ok");$("coCode").value=""}catch(e){msg.className="msg err";msg.textContent=t("err_generic")}$("coGo").disabled=false};
   if($("sAdd"))$("sAdd").onclick=()=>openEdit(null);if($("sAddSelf"))$("sAddSelf").onclick=()=>openEdit(null,true);
   if($("sAddH"))$("sAddH").onclick=()=>openHEdit(null);
   if($("sLang"))$("sLang").querySelectorAll("button").forEach(b=>b.onclick=()=>{prefs.lang=b.dataset.v;savePrefs();D.saveProfile({lang:b.dataset.v});renderSettings()});
@@ -714,7 +724,7 @@ function openEdit(id,self){
   if(!draft.surahs)draft.surahs=[];if(!draft.ranges)draft.ranges=[];go("edit");
 }
 function renderEdit(){
-  applyTheme(null);const d=draft,h=halaqaOf(d),tp=h&&planHas(h.plan);
+  applyTheme(null);const d=draft,h=halaqaOf(d),tp=h&&planHas(h.plan),jn=ST.joins[d.id],live=ST.kids[d.id]||d,me=ST.user.uid,isOwner=!d.parentUid||d.parentUid===me;
   app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t(d._new?"add_kid":"edit_kid")+'</span><button class="iconbtn" id="eBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div>'+
    '<section class="card"><label class="field"><span class="sec-t">'+t("kid_name")+'</span><input id="eName" autocomplete="off" maxlength="30" value="'+esc(d.name)+'"></label>'+seg("eGender",[["m",t("boy")],["f",t("girl")]],d.gender)+(modeOf(d)==="kids"?'<label class="field"><span class="sec-t">'+t("gift_lbl")+'</span><input id="eGift" autocomplete="off" maxlength="60" placeholder="'+t("gift_ph")+'" value="'+esc(d.gift||"")+'"></label>':'')+'</section>'+
    '<section class="card"><div class="row"><label class="field" style="flex:0 0 7em"><span class="sec-t">'+t("age")+'</span><input id="eAge" type="number" inputmode="numeric" min="3" max="99" value="'+esc(d.age==null?"":d.age)+'"></label><label class="checkrow"><input type="checkbox" id="eSelf"'+(d.self?' checked':'')+'> '+t("self")+'</label></div><h3>'+t("ui_mode")+'</h3>'+seg("eMode",[["",t("m_auto")],["kids",t("m_kids")],["teens",t("m_teens")],["adults",t("m_adults")]],d.mode||"")+'</section>'+
@@ -722,10 +732,13 @@ function renderEdit(){
    (modeOf(d)!=="kids"?'<section class="card"><h3>'+t("profile_theme")+'</h3>'+paletteGrid("ePal",d.palette||"",true)+'</section>':'')+
    (modeOf(d)==="kids"?'<section class="card"><h3>'+t(d.gender==="f"?"theme_f":"theme")+'</h3><div class="themes" id="eThemes">'+THEME_ORDER.map(th=>'<button type="button" class="th" data-th="'+th+'" aria-pressed="'+(th===d.theme)+'">'+THEMES[th].art+'<span>'+THEMES[th][L()]+'</span></button>').join("")+'</div></section>':'')+
    '<section class="card"><h3>'+t("halaqa")+'</h3>'+(h?'<p class="about">'+t("joined",esc(h.name))+(h.teacherName?' · '+t("teacher_of",esc(h.teacherName)):'')+'</p><p class="about">'+(tp?t("plan_by_teacher",esc(h.name)):t("plan_by_parent"))+'</p><button type="button" class="btn" id="hLeave" style="align-self:flex-start">'+t("leave")+'</button>':
+     jn&&jn.status==="pending"?'<p class="about">'+t("join_pending",esc(jn.name))+'</p><button type="button" class="btn" id="hCancelJoin" style="align-self:flex-start">'+t("join_cancel")+'</button>':
+     jn&&jn.status==="rejected"?'<p class="msg err">'+t("join_rejected",esc(jn.name))+'</p><button type="button" class="btn" id="hCancelJoin" style="align-self:flex-start">'+t("close")+'</button>':
      '<div class="row"><input id="hCodeIn" class="codein" dir="ltr" maxlength="8" placeholder="'+t("halaqa_code")+'" autocomplete="off" value="'+esc(d._code||"")+'"><button type="button" class="btn primary" id="hJoin">'+t("join")+'</button></div>')+'<p class="msg" id="hMsg"></p></section>'+
    (tp?'':planSection(d))+
+   (d._new?'':coParentCard(live,me))+
    (d._new?'':'<section class="card"><h3>'+t("childdev")+'</h3><p class="about">'+t("childdev_t")+'</p><button type="button" class="btn" id="cdSet" style="align-self:flex-start">'+t("childdev_set",esc(d.name))+'</button></section>')+
-   '<p class="msg err" id="eMsg"></p><div class="row"><button class="btn primary big" id="eSave">'+t("save")+'</button><button class="btn big" id="eCancel">'+t("cancel")+'</button>'+(d._new?'':'<button class="btn big" id="eDel" style="margin-inline-start:auto">'+t("del")+'</button>')+'</div>';
+   '<p class="msg err" id="eMsg"></p><div class="row"><button class="btn primary big" id="eSave">'+t("save")+'</button><button class="btn big" id="eCancel">'+t("cancel")+'</button>'+(d._new||!isOwner?'':'<button class="btn big" id="eDel" style="margin-inline-start:auto">'+t("del")+'</button>')+'</div>';
   $("eName").oninput=e=>{d.name=e.target.value};
   if($("eGift"))$("eGift").oninput=e=>{d.gift=e.target.value};
   if($("hCodeIn"))$("hCodeIn").oninput=e=>{d._code=e.target.value};
@@ -743,12 +756,33 @@ function renderEdit(){
   const hm=(m,ok)=>{$("hMsg").className="msg "+(ok?"ok":"err");$("hMsg").textContent=m};
   if($("hJoin"))$("hJoin").onclick=async()=>{const code=$("hCodeIn").value.trim().toUpperCase();if(!code)return;
     if(d._new||!ST.kids[d.id]){if(!d.name.trim()){hm(t("name_req"));return}await saveDraft(true)}
-    try{const r=await D.joinHalaqa(d.id,code);if(r.err){hm(t("notfound"));return}d.halaqaId=(ST.kids[d.id]||{}).halaqaId||d.halaqaId;draft=Object.assign(JSON.parse(JSON.stringify(ST.kids[d.id]||d)),{_new:false});renderEdit();hm(t("joined",esc(r.name)),true)}catch(e){hm(t("err_generic"))}};
+    try{const r=await D.requestJoin(d.id,code);if(r.err){hm(t("notfound"));return}draft=Object.assign(JSON.parse(JSON.stringify(ST.kids[d.id]||d)),{_new:false});renderEdit();hm(t("join_sent",esc(r.name)),true)}catch(e){hm(t("err_generic"))}};
+  if($("hCancelJoin"))$("hCancelJoin").onclick=async()=>{await D.cancelJoin(d.id);renderEdit()};
+  bindCoParent(live,me,renderEdit);
   if($("hLeave"))$("hLeave").onclick=async()=>{await D.leaveHalaqa(d.id);d.halaqaId=null;d.teacherUid=null;renderEdit()};
   if($("cdSet"))$("cdSet").onclick=()=>{prefs.child={uid:ST.user.uid,kid:d.id};savePrefs();gateOk=false;go("main")};
   $("eSave").onclick=async()=>{const ok=await saveDraft(false);if(ok){prefs.cur=d.id;savePrefs();draft=null;go("main");scrollToday()}};
   let armed=false;if($("eDel"))$("eDel").onclick=async()=>{if(!armed){armed=true;$("eDel").className="btn warn big";$("eDel").textContent=t("del2");return}
     await D.deleteKid(d.id);if(prefs.child&&prefs.child.kid===d.id)prefs.child=null;if(prefs.cur===d.id)prefs.cur=null;savePrefs();draft=null;go("settings")};
+}
+/* co-parents: the owner invites another parent with a one-time code; a co-parent can do everything except delete the child */
+function coParentCard(k,me){
+  if(k.parentUid&&k.parentUid!==me)return '<section class="card"><h3>'+t("co_t")+'</h3><p class="about">'+t("co_you")+'</p><button type="button" class="btn" id="coLeave" style="align-self:flex-start">'+t("co_leave")+'</button></section>';
+  const others=(k.parentUids||[]).filter(u=>u!==me);
+  return '<section class="card"><h3>'+t("co_t")+'</h3><p class="about">'+t("co_about")+'</p>'+
+    others.map(u=>'<div class="kidrow"><span class="t"><b>'+esc((k.parentNames||{})[u]||t("co_unnamed"))+'</b></span><button type="button" class="btn" data-corm="'+esc(u)+'">'+t("co_remove")+'</button></div>').join("")+
+    '<button type="button" class="btn" id="coInv" style="align-self:flex-start">'+t("co_make")+'</button><div id="coBox"></div></section>';
+}
+function bindCoParent(k,me,redraw){
+  app.querySelectorAll("[data-corm]").forEach(b=>{let armed=false;b.onclick=async()=>{if(!armed){armed=true;b.className="btn warn";b.textContent=t("del2");return}b.disabled=true;await D.removeCoParent(k.id,b.dataset.corm);redraw()}});
+  if($("coLeave")){let armed=false;$("coLeave").onclick=async()=>{if(!armed){armed=true;$("coLeave").className="btn warn";$("coLeave").textContent=t("del2");return}
+    await D.leaveCoParent(k.id);if(prefs.cur===k.id)prefs.cur=null;savePrefs();draft=null;go("settings")}}
+  if($("coInv"))$("coInv").onclick=async()=>{$("coInv").disabled=true;
+    try{const r=await D.createCoInvite(k.id);if(r.err){$("coBox").innerHTML='<p class="msg err">'+t("err_generic")+'</p>';$("coInv").disabled=false;return}
+      const txt=t("co_share_txt",k.name,r.code);
+      $("coBox").innerHTML='<p class="about">'+t("co_code_is")+'</p><span class="codechip big" dir="ltr">'+esc(r.code)+'</span><div class="row"><button type="button" class="btn" id="coShare">'+t("co_share")+'</button></div><p class="msg" id="coMsg"></p>';
+      $("coShare").onclick=()=>{if(navigator.share)navigator.share({title:t("app"),text:txt}).catch(()=>{});else copyText(txt,$("coMsg"))}}
+    catch(e){$("coBox").innerHTML='<p class="msg err">'+t("err_generic")+'</p>';$("coInv").disabled=false}};
 }
 async function saveDraft(quiet){
   const d=draft;d.name=(d.name||"").trim();const h=halaqaOf(d),tp=h&&planHas(h.plan);
@@ -814,7 +848,7 @@ function renderJoin(){
   if(!h)return;
   const newKid=self=>{done();openEdit(null,self);draft._code=code;renderEdit()};
   $("jNew").onclick=()=>newKid(false);$("jSelf").onclick=()=>newKid(true);
-  app.querySelectorAll("[data-jk]").forEach(b=>b.onclick=async()=>{b.disabled=true;try{const r=await D.joinHalaqa(b.dataset.jk,code);if(r&&r.err){$("jMsg").className="msg err";$("jMsg").textContent=t("notfound");b.disabled=false;return}
+  app.querySelectorAll("[data-jk]").forEach(b=>b.onclick=async()=>{b.disabled=true;try{const r=await D.requestJoin(b.dataset.jk,code);if(r&&r.err){$("jMsg").className="msg err";$("jMsg").textContent=t("notfound");b.disabled=false;return}
     prefs.cur=b.dataset.jk;prefs.mode="kids";done();go("main")}catch(e){$("jMsg").className="msg err";$("jMsg").textContent=t("err_generic");b.disabled=false}});
 }
 

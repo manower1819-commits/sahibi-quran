@@ -26,6 +26,11 @@ const wsOf=u=>u.weekStart==null||u.weekStart===""?((u.lang||"ar")==="en"?0:6):+u
 async function weekDays(ref,a,b){const ID=admin.firestore.FieldPath.documentId();const s=await ref.collection("days").where(ID,">=",a).where(ID,"<=",b).get();return s.docs.map(d=>d.data())}
 function sumWeek(days){let done=0,home=0,mist=0;days.forEach(r=>{const hs=+(r.stars||0);home+=hs;if(hs>0)done++;mist+=new Set([...(r.weak||[]),...(r.tWeak||[])]).size});return{done,home,mist}}
 
+/* a parent's children: the ones they own (parentUid) and the ones they co-parent (parentUids) */
+async function kidsOfParent(uid){
+  const [a,b]=await Promise.all([db.collection("kids").where("parentUid","==",uid).get(),db.collection("kids").where("parentUids","array-contains",uid).get()]);
+  const m=new Map();[...a.docs,...b.docs].forEach(d=>m.set(d.id,d));return[...m.values()];
+}
 async function send(targets,title,body,link){
   const all=[];targets.forEach(x=>(x.tokens||[]).forEach(tk=>all.push({ref:x.ref,tk})));
   const uniq=[...new Map(all.map(x=>[x.tk,x])).values()];
@@ -42,11 +47,11 @@ async function main(){
   const parents=await db.collection("users").where("remindAt","!=",null).get();
   for(const p of parents.docs){
     const u=p.data(),d=due(u.remindAt,u.offset,u.lastRemind);if(!d)continue;
-    const lang=u.lang||"ar",kids=await db.collection("kids").where("parentUid","==",p.id).get();
-    for(const k of kids.docs){
+    const lang=u.lang||"ar",kids=await kidsOfParent(p.id);
+    for(const k of kids){
       const kd=k.data(),day=await k.ref.collection("days").doc(d).get();
       if(day.exists&&(day.data().stars||0)>0)continue;
-      n+=await send([{ref:p.ref,tokens:u.tokens},{ref:k.ref,tokens:kd.tokens}],tx(lang,"rem_t"),tx(lang,"rem_b",kd.name||""));
+      n+=await send([{ref:p.ref,tokens:u.tokens}].concat(p.id===kd.parentUid?[{ref:k.ref,tokens:kd.tokens}]:[]),tx(lang,"rem_t"),tx(lang,"rem_b",kd.name||""));
     }
     await p.ref.update({lastRemind:d});
   }
@@ -72,16 +77,17 @@ async function main(){
     try{
       const kref=db.collection("kids").doc(String(x.kidId)),k=await kref.get();
       if(k.exists&&k.data().teacherUid===x.teacherUid&&Date.now()-(x.at||0)<6*3600e3){
-        const kd=k.data(),pref=db.collection("users").doc(kd.parentUid),p=await pref.get(),pu=p.exists?p.data():{},lang=pu.lang||x.lang||"ar";
-        n+=await send([{ref:pref,tokens:pu.tokens},{ref:kref,tokens:kd.tokens}],tx(lang,"t_t"),tx(lang,kd.gender==="f"?"t_bf":"t_b",kd.name||""));
+        const kd=k.data(),uids=[...new Set([kd.parentUid,...(kd.parentUids||[])].filter(Boolean))],targets=[{ref:kref,tokens:kd.tokens}];let lang=x.lang||"ar";
+        for(const pid of uids){const pref=db.collection("users").doc(pid),p=await pref.get(),pu=p.exists?p.data():{};if(pid===kd.parentUid)lang=pu.lang||lang;targets.push({ref:pref,tokens:pu.tokens})}
+        n+=await send(targets,tx(lang,"t_t"),tx(lang,kd.gender==="f"?"t_bf":"t_b",kd.name||""));
       }
     }finally{await r.ref.delete()}
   }
   // 4) weekly reports (first day of the new week)
   for(const p of parents.docs){
     const u=p.data(),d=due(u.remindAt,u.offset,u.lastWeekly);if(!d||dow(d)!==wsOf(u))continue;
-    const lang=u.lang||"ar",a=addD(d,-7),b=addD(d,-1),kids=await db.collection("kids").where("parentUid","==",p.id).get(),lines=[];
-    for(const k of kids.docs){const w=sumWeek(await weekDays(k.ref,a,b));lines.push(tx(lang,"w_line",k.data().name||"",w.done,w.home,w.mist))}
+    const lang=u.lang||"ar",a=addD(d,-7),b=addD(d,-1),kids=await kidsOfParent(p.id),lines=[];
+    for(const k of kids){const w=sumWeek(await weekDays(k.ref,a,b));lines.push(tx(lang,"w_line",k.data().name||"",w.done,w.home,w.mist))}
     if(lines.length)n+=await send([{ref:p.ref,tokens:u.tokens}],tx(lang,"w_t"),lines.join("\n"),"/?report=1");
     await p.ref.update({lastWeekly:d});
   }
@@ -97,5 +103,5 @@ async function main(){
   }
   console.log("notifications sent:",n);
 }
-module.exports={main,due,local,sumWeek,addD,dow,wsOf};
+module.exports={main,due,local,sumWeek,addD,dow,wsOf,kidsOfParent};
 if(require.main===module)main().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});

@@ -421,3 +421,4 @@ body{-webkit-font-smoothing:antialiased}
 .sheet .qline{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.2;margin:0;text-align:center;min-height:1.2em}
 .sheet-in h3{margin:6px 0 0;font-size:15px;color:var(--muted)}
 .qbasm{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.2;text-align:center;margin:8px 0 0}
+.warnc{color:var(--bad);font-weight:600}
