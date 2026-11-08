@@ -12,8 +12,8 @@ const LATE_MAX=180; // minutes: skip a reminder that is more than 3 hours overdu
 const BASE=process.env.APP_URL||"https://sahibi-quran.web.app";
 
 const TXT={
-  ar:{rem_t:"تذكير بالورد",rem_b:"ورد {0} لليوم لم يُسجَّل بعد",sum_t:"ملخص اليوم: {0}",sum_b:"أتمّ {0} من {1}. لم يُتمّ: {2}",sum_all:"أتمّ الجميع ورد اليوم، ما شاء الله",t_t:"تذكير من المعلم",t_b:"لا تنسَ ورد اليوم يا {0}",t_bf:"لا تنسَي ورد اليوم يا {0}",w_t:"تقرير الأسبوع جاهز",w_line:"{0}: {1}/7 أيام · {2} نجمة · {3} خطأ",hw_t:"تقرير الأسبوع: {0}",hw_b:"أتمّ الأسبوع {0} من {1} · متوسط نجوم البيت {2}"},
-  en:{rem_t:"Wird reminder",rem_b:"{0}'s wird for today isn't logged yet",sum_t:"Today's summary: {0}",sum_b:"{0} of {1} done. Not yet: {2}",sum_all:"Everyone finished today's wird. Masha'Allah",t_t:"Reminder from your teacher",t_b:"Don't forget today's wird, {0}",t_bf:"Don't forget today's wird, {0}",w_t:"Your weekly report is ready",w_line:"{0}: {1}/7 days · {2} stars · {3} mistakes",hw_t:"Weekly report: {0}",hw_b:"{0} of {1} finished the week · average home stars {2}"}
+  ar:{rem_t:"تذكير بالورد",rem_b:"ورد {0} لليوم لم يُسجَّل بعد",sum_t:"ملخص اليوم: {0}",sum_b:"أتمّ {0} من {1}. لم يُتمّ: {2}",sum_all:"أتمّ الجميع ورد اليوم، ما شاء الله",n_t:"ملاحظة جديدة من المعلم",n_b:"كتب المعلم ملاحظة على ورد {0}",t_t:"تذكير من المعلم",t_b:"لا تنسَ ورد اليوم يا {0}",t_bf:"لا تنسَي ورد اليوم يا {0}",w_t:"تقرير الأسبوع جاهز",w_line:"{0}: {1}/7 أيام · {2} نجمة · {3} خطأ",hw_t:"تقرير الأسبوع: {0}",hw_b:"أتمّ الأسبوع {0} من {1} · متوسط نجوم البيت {2}"},
+  en:{rem_t:"Wird reminder",rem_b:"{0}'s wird for today isn't logged yet",sum_t:"Today's summary: {0}",sum_b:"{0} of {1} done. Not yet: {2}",sum_all:"Everyone finished today's wird. Masha'Allah",n_t:"New note from your teacher",n_b:"Your teacher wrote a note on {0}'s wird",t_t:"Reminder from your teacher",t_b:"Don't forget today's wird, {0}",t_bf:"Don't forget today's wird, {0}",w_t:"Your weekly report is ready",w_line:"{0}: {1}/7 days · {2} stars · {3} mistakes",hw_t:"Weekly report: {0}",hw_b:"{0} of {1} finished the week · average home stars {2}"}
 };
 const tx=(lang,k,...a)=>{let s=(TXT[lang]||TXT.ar)[k];a.forEach((v,i)=>s=s.split("{"+i+"}").join(v));return s};
 const local=off=>{const d=new Date(Date.now()+(off||0)*60000);return{date:d.toISOString().slice(0,10),min:d.getUTCHours()*60+d.getUTCMinutes()}};
@@ -79,7 +79,7 @@ async function main(){
       if(k.exists&&k.data().teacherUid===x.teacherUid&&Date.now()-(x.at||0)<6*3600e3){
         const kd=k.data(),uids=[...new Set([kd.parentUid,...(kd.parentUids||[])].filter(Boolean))],targets=[{ref:kref,tokens:kd.tokens}];let lang=x.lang||"ar";
         for(const pid of uids){const pref=db.collection("users").doc(pid),p=await pref.get(),pu=p.exists?p.data():{};if(pid===kd.parentUid)lang=pu.lang||lang;targets.push({ref:pref,tokens:pu.tokens})}
-        n+=await send(targets,tx(lang,"t_t"),tx(lang,kd.gender==="f"?"t_bf":"t_b",kd.name||""));
+        n+=await send(targets,tx(lang,x.kind==="note"?"n_t":"t_t"),x.kind==="note"?tx(lang,"n_b",kd.name||""):tx(lang,kd.gender==="f"?"t_bf":"t_b",kd.name||""));
       }
     }finally{await r.ref.delete()}
   }

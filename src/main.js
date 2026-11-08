@@ -8,6 +8,7 @@ import {avatar,LOOKS,SKINS} from "./avatar.js";
 import {PALETTES,PALETTE_ORDER} from "./palettes.js";
 import {juzCoverage,surahsOfJuz} from "./juz.js";
 import {pageStrugglers} from "./strength.js";
+import {validPin,makePin,checkPin,failState,waitLeft,lockExpired} from "./pin.js";
 import {makeBackup,parseBackup,MAX_FILE_BYTES} from "./backup.js";
 import {parseQuranText,quranTextComplete,splitBasmala,QURAN_TEXT_URL} from "./quran-text.js";
 import {PTS_STAR,PTS_WEEK,PTS_CHALLENGE,levelInfo,challengeFor,challengeProgress} from "./gamify.js";
@@ -44,7 +45,9 @@ const app=$("app");
 
 /* ================= planning ================= */
 function halaqaOf(kid){if(!kid||!kid.halaqaId)return null;return ST.hdocs[kid.halaqaId]||ST.halaqas[kid.halaqaId]||null}
-function effPlan(kid){const h=halaqaOf(kid);return h&&planHas(h.plan)?h.plan:kid}
+/* the plan the teacher set for this child: a plan just for them (halaqa.studentPlans[kidId]), else the class plan, else none */
+function teacherPlanOf(kid){const h=halaqaOf(kid);if(!h)return null;const sp=(h.studentPlans||{})[kid.id];return planHas(sp)?sp:planHas(h.plan)?h.plan:null}
+function effPlan(kid){return teacherPlanOf(kid)||kid}
 const planSurahCount=p=>new Set(planUnits(p).map(u=>u[0])).size;
 function day(kid,date){return ((ST.days[kid.id]||{})[date])||null}
 function planFor(kid,date){
@@ -73,6 +76,10 @@ function setDir(){const h=document.documentElement;h.lang=L();h.dir=L()==="en"?"
 /* ================= navigation ================= */
 let nav={view:"main"};       // main | hist | gate | settings | edit | halaqa | hedit | student | shist
 let gateOk=false,weekView=null,hDate=null,draft=null;
+// the settings lock closes by itself after 5 minutes without a touch or a key
+let lastAct=Date.now();
+["pointerdown","keydown","touchstart"].forEach(ev=>addEventListener(ev,()=>{lastAct=Date.now()},{passive:true,capture:true}));
+setInterval(()=>{if(gateOk&&lockExpired(lastAct,Date.now())&&needsGate()){gateOk=false;if(["settings","edit","hedit"].indexOf(nav.view)>-1){draft=null;go("main")}}},10000);
 function go(v,extra){nav=Object.assign({view:v},extra||{});weekView=null;render();window.scrollTo({top:0})}
 const kidsList=()=>Object.values(ST.kids).sort((a,b)=>(a.created||0)-(b.created||0));
 const halaqaList=()=>Object.values(ST.halaqas).sort((a,b)=>(a.created||0)-(b.created||0));
@@ -86,7 +93,7 @@ D.onChange(()=>{if(ST.user&&ST.profile.lang&&!prefs.lang){prefs.lang=ST.profile.
 function softRender(){
   // never rebuild the page under the user's fingers: while typing or right after a tap, update live bits only
   const a=document.activeElement,typing=a&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA"||a.tagName==="SELECT")&&app.contains(a);
-  if(typing||Date.now()<quietUntil||["edit","hedit","settings","gate"].indexOf(nav.view)>-1&&ST.ready&&ST.user&&app.childElementCount){pending=true;refreshLive();
+  if(typing||Date.now()<quietUntil||["edit","hedit","sedit","settings","gate"].indexOf(nav.view)>-1&&ST.ready&&ST.user&&app.childElementCount){pending=true;refreshLive();
     if(!typing&&Date.now()<quietUntil){clearTimeout(qT);qT=setTimeout(()=>{if(pending)softRender()},quietUntil-Date.now()+50)}return}
   pending=false;render();
 }
@@ -107,6 +114,7 @@ function render(){
   if(prefs.mode==="teach"&&halaqaList().length){
     if(v==="halaqa"&&ST.halaqas[nav.hid])return renderHalaqa(ST.halaqas[nav.hid]);
     if(v==="student"){const k=(ST.students[nav.hid]||{})[nav.kid];if(k)return renderStudent(k,ST.halaqas[nav.hid]);}
+    if(v==="sedit"){const k=(ST.students[nav.hid]||{})[nav.kid];if(k&&ST.halaqas[nav.hid]&&draft)return renderSEdit(k,ST.halaqas[nav.hid]);}
     if(v==="shist"){const k=(ST.students[nav.hid]||{})[nav.kid];if(k)return renderHist(k,{teacher:true,hid:nav.hid});}
     if(v==="hreport"&&ST.halaqas[nav.hid])return renderHReport(ST.halaqas[nav.hid]);
     if(v==="sreport"){const k=(ST.students[nav.hid]||{})[nav.kid];if(k)return renderReport(k,{teacher:true,hid:nav.hid});}
@@ -249,7 +257,7 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   const teacherBox=(+(r.tStars||0)>0||r.tNotes||(r.tWeak||[]).length)?'<div class="other"><span>'+t("teacher_rating")+': '+(+(r.tStars||0)>0?starsRO(+r.tStars):t("not_rated"))+'</span>'+((r.tWeak||[]).length?'<span class="hint">'+t("mistake")+': '+r.tWeak.map(n=>esc(sName(n))).join("، ")+'</span>':'')+(r.tNotes?'<span class="hint">'+esc(r.tNotes)+'</span>':'')+'</div>':'';
   if(teacherMode){
     html+='<div class="other"><span>'+t("home_rating")+': '+(+(r.stars||0)>0?starsRO(+r.stars):t("not_rated"))+'</span>'+((r.weak||[]).length?'<span class="hint">'+t("mistake")+': '+r.weak.map(n=>esc(sName(n))).join("، ")+'</span>':'')+(r.nS?'<span class="hint">'+t("newm")+': '+esc(sName(+r.nS))+' '+(r.nF||"")+'–'+(r.nT||"")+'</span>':'')+(r.notes?'<span class="hint">'+esc(r.notes)+'</span>':'')+'</div>'+
-      starRow("t",t("tstars"))+'<label class="field"><span class="sec-t">'+t("tnotes")+'</span><textarea data-f="tNotes" id="tn-'+date+'" rows="1"></textarea></label>';
+      starRow("t",t("tstars"))+'<label class="field"><span class="sec-t">'+t("tnotes")+'</span><textarea data-f="tNotes" id="tn-'+date+'" rows="1"></textarea><span class="hint">'+t("tnotes_hint")+'</span></label>';
   }else if(variant==="kids"){
     html+='<div class="stars big h" role="group" aria-label="'+t("stars")+'">'+[1,2,3].map(n=>'<button class="starbtn" data-n="'+n+'" aria-label="'+n+'">'+STAR+'</button>').join("")+'</div>'+teacherBox+
       '<details class="more"><summary>'+t("for_parents")+'</summary>'+extras+'</details>';
@@ -259,13 +267,13 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
     html+=extras.split('<label class="field"><span class="sec-t">'+t("notes"))[0]+starRow("h",t("stars"))+teacherBox+'<label class="field"><span class="sec-t">'+t("notes")+'</span><textarea data-f="notes" id="no-'+date+'" rows="1"></textarea></label>';
   }
   el.innerHTML=html;
-  el.querySelectorAll("input[data-f],textarea[data-f]").forEach(inp=>{inp.value=r[inp.dataset.f]||"";let tm;inp.addEventListener("input",()=>{clearTimeout(tm);tm=setTimeout(()=>{let v=inp.value;if(inp.type==="number"){const n=+el.querySelector("[data-f=nS]").value;v=v===""?"":Math.max(1,Math.min(n?S[n-1][2]:286,Math.round(+v)||1));}setField(k,date,{[inp.dataset.f]:v});askAdd()},500)})});
+  el.querySelectorAll("input[data-f],textarea[data-f]").forEach(inp=>{inp.value=r[inp.dataset.f]||"";let tm;inp.addEventListener("input",()=>{clearTimeout(tm);tm=setTimeout(()=>{let v=inp.value;if(inp.type==="number"){const n=+el.querySelector("[data-f=nS]").value;v=v===""?"":Math.max(1,Math.min(n?S[n-1][2]:286,Math.round(+v)||1));}setField(k,date,{[inp.dataset.f]:v});if(teacherMode&&inp.dataset.f==="tNotes")notifyNote(k,date,v);askAdd()},500)})});
   const sel=el.querySelector("select[data-f]");if(sel)sel.addEventListener("change",e=>{const v=+e.target.value||"";setField(k,date,{nS:v});askAdd();if(v)el.querySelectorAll("input[type=number]").forEach(x=>x.max=S[v-1][2])});
   // after the parent logs new memorization, offer to add it to the review plan (own plan only: never over a teacher's plan, never from the child's device)
   const askBox=el.querySelector(".addrev");
   function askAdd(){
     if(!askBox)return;askBox.hidden=true;askBox.innerHTML="";
-    const kk=ST.kids[k.id];if(teacherMode||childKid()||!kk||planHas((halaqaOf(kk)||{}).plan))return;
+    const kk=ST.kids[k.id];if(teacherMode||childKid()||!kk||teacherPlanOf(kk))return;
     const rr=day(k,date)||{},n=+rr.nS,f=+rr.nF,to=+rr.nT;
     if(!n||!(f>=1)||!(to>=f)||to>S[n-1][2])return;
     const key=[k.id,date,n,f,to].join(":");
@@ -322,6 +330,12 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   return el;
 }
 let justAdded="",justMade="",justStr="";
+/* a teacher's note for a child sends the parents one notification a day (it goes through the reminders queue; the job sends it) */
+function notifyNote(k,date,v){
+  if(!String(v||"").trim())return;const key=k.id+":"+date;prefs.noteSent=prefs.noteSent||{};if(prefs.noteSent[key])return;
+  prefs.noteSent[key]=1;const ks=Object.keys(prefs.noteSent);if(ks.length>200)ks.slice(0,ks.length-200).forEach(x=>delete prefs.noteSent[x]);savePrefs();
+  Promise.resolve(D.notifyNote(k.id,L())).catch(()=>{delete prefs.noteSent[key];savePrefs()});
+}
 let afterRate=(k,w,i,v,cur,b)=>{if($("path"))renderPath(k,w);if(v>cur){burst(b);const st=$("st-"+i);if(st)st.classList.add("pulse")}};
 function renderDays(k,w,teacherMode){
   const box=$("days");box.innerHTML="";
@@ -373,13 +387,24 @@ let _modeKid="kids";const modeKid=()=>_modeKid;
 function bindNav(){app.querySelectorAll("[data-nav]").forEach(b=>b.onclick=()=>{const v=b.dataset.nav;if(v==="gear")return openSettings();go(v);if(v==="main")setTimeout(()=>window.scrollTo({top:0}),0)})}
 function openSettings(){go(gateOk||!needsGate()?"settings":"gate")}
 function needsGate(){const ks=kidsList();return ks.length===0?false:!ks.every(k=>k.self||modeOf(k)==="adults")}
+/* In-app reminder: once the parent's reminder time has passed and a child's wird is still not logged today, say so on screen
+   (a fallback for when a push notification does not arrive). Dismissible for the rest of the day. */
+function reminderBanner(){
+  const P=ST.profile;if(childKid()||!P.remindAt||prefs.remDay===today())return "";
+  const now=new Date(),hm=String(P.remindAt).split(":").map(Number);
+  if(now.getHours()*60+now.getMinutes()<hm[0]*60+hm[1])return "";
+  const td=today(),miss=kidsList().filter(k=>!(+((day(k,td)||{}).stars||0)>0));
+  if(!miss.length)return "";
+  return '<div class="remind-banner" role="status"><span>'+t("rem_banner",miss.map(k=>esc(k.name)).join("، "))+'</span><button type="button" class="btn small" id="remDis">'+t("rem_dis")+'</button></div>';
+}
 function slimTop(k){
   const showMode=!childKid()&&halaqaList().length>0;
-  const tb=tabs(k);
-  if(!tb&&!showMode)return '';
-  return '<div class="slimtop">'+tb+(showMode?'<div class="seg mode" id="modeSeg"><button data-m="kids" aria-pressed="'+(prefs.mode!=="teach")+'">'+t("mykids")+'</button><button data-m="teach" aria-pressed="'+(prefs.mode==="teach")+'">'+t("myhalaqas")+'</button></div>':'')+'</div>';
+  const tb=tabs(k),rb=reminderBanner();
+  if(!tb&&!showMode)return rb;
+  return rb+'<div class="slimtop">'+tb+(showMode?'<div class="seg mode" id="modeSeg"><button data-m="kids" aria-pressed="'+(prefs.mode!=="teach")+'">'+t("mykids")+'</button><button data-m="teach" aria-pressed="'+(prefs.mode==="teach")+'">'+t("myhalaqas")+'</button></div>':'')+'</div>';
 }
 function bindSlim(){
+  if($("remDis"))$("remDis").onclick=()=>{prefs.remDay=today();savePrefs();render()};
   if($("modeSeg"))$("modeSeg").querySelectorAll("button").forEach(b=>b.onclick=()=>{prefs.mode=b.dataset.m;savePrefs();go("main")});
   app.querySelectorAll(".tab[data-k]").forEach(b=>b.onclick=()=>{prefs.cur=b.dataset.k;selDay=null;savePrefs();go("main")});
 }
@@ -603,15 +628,38 @@ function renderHalaqa(h){
     row.querySelectorAll(".starbtn").forEach(b=>b.onclick=()=>{const cur=+((day(k,date)||{}).tStars||0),n=+b.dataset.n,v=cur===n?0:n;setField(k,date,{tStars:v});paint(row,v)})});
   app.querySelectorAll("[data-rem]").forEach(b=>b.onclick=async()=>{b.disabled=true;try{await D.remindKid(b.dataset.rem,L());reminded[b.dataset.rem+date]=1;b.textContent=t("reminded")}catch(e){b.disabled=false;b.textContent=t("err_generic")}});
 }
+function studentPlanCard(k,h){
+  const sp=(h.studentPlans||{})[k.id],has=planHas(sp);
+  return '<section class="card"><h3>'+t("sp_t")+'</h3><p class="about">'+(has?t("sp_has",planSurahCount(sp),cycleLbl(sp.cycle)):t(planHas(h.plan)?"sp_none":"sp_none_noplan"))+'</p><div class="row"><button class="btn" id="spEdit">'+t(has?"sp_edit":"sp_set")+'</button>'+(has?'<button class="btn" id="spOff">'+t("sp_off")+'</button>':'')+'</div></section>';
+}
+function renderSEdit(k,h){
+  applyTheme(null);const d=draft;
+  app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t("sp_t")+'</span><button class="iconbtn" id="eBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div>'+
+   '<section class="card"><h2>'+esc(k.name)+'</h2><p class="about">'+t("sp_about")+'</p></section>'+planSection(d._p)+
+   '<p class="msg err" id="eMsg"></p><div class="row"><button class="btn primary big" id="eSave">'+t("save")+'</button><button class="btn big" id="eCancel">'+t("cancel")+'</button></div>';
+  bindPlan(d._p);
+  const leave=()=>{draft=null;go("student",{hid:h.id,kid:k.id})};
+  $("eBack").onclick=leave;$("eCancel").onclick=leave;
+  $("eSave").onclick=async()=>{if(!planHas(d._p)){$("eMsg").textContent=t("surah_req");return}
+    $("eSave").disabled=true;
+    try{const prev=(h.studentPlans||{})[k.id],same=prev&&JSON.stringify([prev.surahs,prev.ranges||[],prev.cycle,prev.light])===JSON.stringify([d._p.surahs,d._p.ranges,d._p.cycle,d._p.light]);
+      const np={surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,light:d._p.light,weekStart:WS(),start:same&&prev.start?prev.start:weekOf(today())};
+      await D.saveHalaqa(Object.assign({},h,{studentPlans:Object.assign({},h.studentPlans||{},{[k.id]:np})}));leave()}
+    catch(e){$("eSave").disabled=false;$("eMsg").textContent=t("err_generic")}};
+}
 function renderStudent(k,h){
   applyTheme(k.theme);
   const w=weekView||weekOf(today()),isCur=w===weekOf(today());
-  app.innerHTML=topbar()+'<div class="row between"><button class="btn" id="sBack">'+esc(h.name)+'</button><button class="btn" id="sRemove">'+t("remove_st")+'</button></div>'+hero(k,t("history"),t("joined",esc(h.name)))+
+  app.innerHTML=topbar()+'<div class="row between"><button class="btn" id="sBack">'+esc(h.name)+'</button><button class="btn" id="sRemove">'+t("remove_st")+'</button></div>'+hero(k,t("history"),t("joined",esc(h.name)))+studentPlanCard(k,h)+
    '<div class="weeknav"><button class="btn" id="wPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b></span><button class="btn" id="wNext">'+t("next")+'</button></div>'+
    (isCur?'':'<button class="btn accent" id="wNow" style="align-self:center">'+t("this_week")+'</button>')+'<div class="days" id="days"></div>';
   bindTop();
   $("sBack").onclick=()=>go("halaqa",{hid:h.id});
   $("toggleView").onclick=()=>go("shist",{hid:h.id,kid:k.id});
+  $("spEdit").onclick=()=>{const sp=(h.studentPlans||{})[k.id],src=planHas(sp)?sp:planHas(h.plan)?h.plan:null;
+    draft={_p:src?{surahs:(src.surahs||[]).slice(),ranges:(src.ranges||[]).map(r=>r.slice()),cycle:src.cycle||1,light:src.light==null?5:src.light}:{surahs:[],ranges:[],cycle:1,light:5}};go("sedit",{hid:h.id,kid:k.id})};
+  if($("spOff")){let armed=false;$("spOff").onclick=async()=>{if(!armed){armed=true;$("spOff").className="btn warn";$("spOff").textContent=t("del2");return}
+    await D.saveHalaqa(Object.assign({},h,{studentPlans:Object.assign({},h.studentPlans||{},{[k.id]:null})}));render()}}
   $("wPrev").onclick=()=>{weekView=addDays(w,-7);render()};$("wNext").onclick=()=>{weekView=addDays(w,7);render()};
   if($("wNow"))$("wNow").onclick=()=>{weekView=null;render()};
   let armed=false;$("sRemove").onclick=async()=>{if(!armed){armed=true;$("sRemove").className="btn warn";$("sRemove").textContent=t("del2");return}await D.removeStudent(k.id);delete (ST.students[h.id]||{})[k.id];go("halaqa",{hid:h.id})};
@@ -621,12 +669,26 @@ function copyText(txt,msgEl){const ok=()=>{msgEl.textContent=t("copied")};try{na
 
 /* ================= gate & settings ================= */
 let gA=0,gB=0;
+let pinFail=null;
 function renderGate(){
   applyTheme(null);gA=3+Math.floor(Math.random()*7);gB=3+Math.floor(Math.random()*7);
-  app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t("app")+'</span><button class="iconbtn" id="gBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div><section class="card gatebox"><h2>'+t("settings")+'</h2><p class="msg">'+t("gate_q")+'</p><span class="q">'+gA+' × '+gB+' = ?</span><input id="gIn" type="number" inputmode="numeric" autocomplete="off"><button class="btn primary big" id="gGo">'+t("gate_go")+'</button><p class="msg err" id="gMsg"></p></section>';
+  const pin=ST.profile.pin&&ST.profile.pin.h?ST.profile.pin:null;
+  app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t("app")+'</span><button class="iconbtn" id="gBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div><section class="card gatebox"><h2>'+t("settings")+'</h2>'+
+    (pin?'<p class="msg">'+t("gate_pin_q")+'</p><input id="gIn" type="password" inputmode="numeric" maxlength="4" autocomplete="off" dir="ltr"><button class="btn primary big" id="gGo">'+t("gate_go")+'</button><p class="msg err" id="gMsg"></p><button type="button" class="linkbtn" id="gForgot">'+t("pin_forgot")+'</button><div id="gReset" hidden><input id="gPw" type="password" autocomplete="current-password" placeholder="'+t("pin_pw")+'"><button class="btn" id="gPwGo">'+t("pin_reset")+'</button></div>'
+       :'<p class="msg">'+t("gate_q")+'</p><span class="q">'+gA+' × '+gB+' = ?</span><input id="gIn" type="number" inputmode="numeric" autocomplete="off"><button class="btn primary big" id="gGo">'+t("gate_go")+'</button><p class="msg err" id="gMsg"></p>')+'</section>';
   $("gBack").onclick=()=>go("main");
-  const ok=()=>{if(+$("gIn").value===gA*gB){gateOk=true;go("settings")}else{$("gMsg").textContent=t("gate_wrong");$("gIn").value=""}};
+  const open=()=>{gateOk=true;lastAct=Date.now();go("settings")};
+  const ok=async()=>{
+    if(pin){const w=waitLeft(pinFail,Date.now());if(w>0){$("gMsg").textContent=t("pin_wait",w);return}
+      if(await checkPin($("gIn").value,pin)){pinFail=null;open();return}
+      pinFail=failState(pinFail,Date.now());const w2=waitLeft(pinFail,Date.now());$("gMsg").textContent=w2>0?t("pin_wait",w2):t("gate_wrong");$("gIn").value="";return}
+    if(+$("gIn").value===gA*gB)open();else{$("gMsg").textContent=t("gate_wrong");$("gIn").value=""}};
   $("gGo").onclick=ok;$("gIn").addEventListener("keydown",e=>{if(e.key==="Enter")ok()});
+  if(pin){
+    $("gForgot").onclick=()=>{$("gReset").hidden=false;$("gPw").focus()};
+    $("gPwGo").onclick=async()=>{$("gPwGo").disabled=true;
+      try{await D.signIn(ST.user.email,$("gPw").value);await D.saveProfile({pin:null});pinFail=null;open()}
+      catch(e){$("gMsg").textContent=t(e&&e.code&&I[L()][e.code]?e.code:"pin_pw_bad");$("gPwGo").disabled=false}}}
 }
 function timeOptions(sel){let o='<option value="">'+t("off")+'</option>';for(let m=5*60;m<24*60;m+=15){const v=pad(Math.floor(m/60))+":"+pad(m%60);o+='<option value="'+v+'"'+(v===sel?' selected':'')+'>'+v+'</option>'}return o}
 function toUtcSlot(hhmm){if(!hhmm)return null;const [h,m]=hhmm.split(":").map(Number),off=-new Date().getTimezoneOffset();return (((h*60+m-off)%1440)+1440)%1440}
@@ -635,7 +697,7 @@ function renderSettings(){
   const P=ST.profile,ck=childKid(),hasLocal=(()=>{try{const v=JSON.parse(localStorage.getItem("sahibi-quran-v1")||"null");return v&&v.kids&&v.kids.length&&!P.imported?v:null}catch(e){return null}})();
   app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t("settings")+'</span><button class="btn primary" id="sDone">'+t("done")+'</button></div>'+
    (ck?'<section class="card"><h2 class="sh">'+ICONS.phone+t("childdev")+'</h2><p class="about">'+t("childdev_on",esc(ck.name))+'</p><button class="btn" id="cdOff" style="align-self:flex-start">'+t("childdev_off")+'</button></section>':'')+
-   '<section class="card"><h2 class="sh">'+ICONS.bell+t("notif")+'</h2><button class="btn primary" id="nOn" style="align-self:flex-start">'+t("notif_on")+'</button><p class="msg" id="nMsg"></p>'+
+   '<section class="card"><h2 class="sh">'+ICONS.bell+t("notif")+'</h2><button class="btn primary" id="nOn" style="align-self:flex-start">'+t("notif_on")+'</button><p class="msg" id="nMsg"></p><div class="hint" id="nStat"></div><button type="button" class="btn" id="nTest" style="align-self:flex-start">'+t("nt_btn")+'</button>'+
     (ck?'':'<label class="field"><span class="sec-t">'+t("remind_at")+'</span><select id="remAt">'+timeOptions(P.remindAt||"")+'</select></label>'+(halaqaList().length?'<label class="field"><span class="sec-t">'+t("summary_at")+'</span><select id="sumAt">'+timeOptions(P.summaryAt||"")+'</select></label>':''))+'</section>'+
    (ck?'':
    '<section class="card"><h2 class="sh">'+ICONS.people+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",planSurahCount(effPlan(k)))+' · '+cycleLbl(effPlan(k).cycle||1))+((ST.joins[k.id]||{}).status==="pending"?' · '+t("join_pending_short"):'')+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
@@ -643,13 +705,25 @@ function renderSettings(){
    '<section class="card"><h2 class="sh">'+ICONS.book+t("myhalaqas")+'</h2>'+(halaqaList().length?halaqaList().map(h=>'<div class="kidrow"><span class="t"><b>'+esc(h.name)+'</b><small dir="ltr">'+esc(h.code)+'</small></span><button class="btn" data-he="'+h.id+'">'+t("edit_kid")+'</button></div>').join(""):'<p class="about">'+t("teach_t")+'</p>')+'<button class="btn accent" id="sAddH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.palette+t("appearance")+'</h2><p class="about">'+t("appearance_t")+'</p>'+paletteGrid("sPal",appTheme(),false)+'</section>'+
    '<section class="card"><h2 class="sh">'+ICONS.globe+t("lang")+'</h2>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'<h3>'+t("hij_lbl")+'</h3>'+seg("sHij",[["0",t("hij_off")],["1",t("hij_on")]],ST.profile.hijri?"1":"0")+'<p class="hint">'+t("hij_t")+'</p></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.info+t("lock_t")+'</h2><p class="about">'+t("lock_about")+'</p><p class="msg ok" id="lkSt">'+(ST.profile.pin&&ST.profile.pin.h?t("lock_on_pin"):t("lock_on_q"))+'</p><div class="row"><button class="btn" id="lkSet">'+t(ST.profile.pin&&ST.profile.pin.h?"pin_change":"pin_set")+'</button>'+(ST.profile.pin&&ST.profile.pin.h?'<button class="btn" id="lkOff">'+t("pin_remove")+'</button>':'')+'</div><div id="lkBox"></div></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.info+t("bk_title")+'</h2><p class="about">'+t("bk_t")+'</p><div class="row"><button class="btn" id="bkOut">'+t("bk_export")+'</button><button class="btn" id="bkIn">'+t("bk_import")+'</button></div><input type="file" id="bkFile" accept="application/json,.json" hidden><p class="msg" id="bkMsg"></p><div id="bkConf"></div></section>'+
    (hasLocal?'<section class="card"><button class="btn" id="imp">'+t("import_local")+'</button><p class="msg ok" id="impMsg"></p></section>':''))+
    '<section class="card"><h2 class="sh">'+ICONS.user+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><p class="hint">'+t("audio_src")+'</p><p class="hint">'+tanzilLine()+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
   $("sDone").onclick=()=>{go("main");scrollToday()};
   if($("cdOff"))$("cdOff").onclick=()=>{prefs.child=null;savePrefs();renderSettings()};
-  $("nOn").onclick=async()=>{const m=$("nMsg");m.className="msg";try{const r=await D.enablePush(ck?{kidId:ck.id}:{});m.className="msg "+(r==="ok"?"ok":"err");m.textContent=t({ok:"notif_ok",denied:"notif_denied",unsupported:"notif_unsupported","ios-home":"notif_ios",demo:"notif_demo"}[r]||"err_generic")}catch(e){m.className="msg err";m.textContent=t("err_generic")}};
+  $("nOn").onclick=async()=>{const m=$("nMsg");m.className="msg";try{const r=await D.enablePush(ck?{kidId:ck.id}:{});fillStat();m.className="msg "+(r==="ok"?"ok":"err");m.textContent=t({ok:"notif_ok",denied:"notif_denied",unsupported:"notif_unsupported","ios-home":"notif_ios",demo:"notif_demo"}[r]||"err_generic")}catch(e){m.className="msg err";m.textContent=t("err_generic")}};
+  const fillStat=()=>{const sup="Notification" in window&&"serviceWorker" in navigator,perm=sup?Notification.permission:"unsupported",
+      ios=/iPhone|iPad|iPod/.test(navigator.userAgent)&&!navigator.standalone,n=((ck?ck.tokens:P.tokens)||[]).length;
+    $("nStat").innerHTML='<div>'+t("ps_perm",t({granted:"ps_granted",denied:"ps_denied",default:"ps_default",unsupported:"ps_unsupported"}[perm]||"ps_default"))+'</div><div>'+t(ck?"ps_devs_k":"ps_devs",n)+'</div>'+(ck?'':'<div>'+t("ps_time",P.remindAt||t("off"))+'</div>')+(ios?'<div>'+t("ps_ios")+'</div>':'')};
+  fillStat();
+  $("nTest").onclick=async()=>{const mm=$("nMsg");mm.className="msg";
+    if(!("Notification" in window)){mm.className="msg err";mm.textContent=t("notif_unsupported");return}
+    if(Notification.permission!=="granted"){mm.className="msg err";mm.textContent=t("nt_need");return}
+    try{const opts={body:t("nt_body"),icon:"icons/icon-192.png",dir:"auto",tag:"sahibi-test"};
+      const reg=navigator.serviceWorker&&await Promise.race([navigator.serviceWorker.ready,new Promise(r=>setTimeout(()=>r(null),2000))]);
+      if(reg&&reg.showNotification)await reg.showNotification(t("app"),opts);else new Notification(t("app"),opts);
+      mm.className="msg ok";mm.textContent=t("nt_sent")}catch(e){mm.className="msg err";mm.textContent=t("nt_fail")}};
   const off=-new Date().getTimezoneOffset();
   if($("remAt"))$("remAt").onchange=e=>D.saveProfile({remindAt:e.target.value||null,remindUtc:toUtcSlot(e.target.value),offset:off});
   if($("sumAt"))$("sumAt").onchange=e=>D.saveProfile({summaryAt:e.target.value||null,summaryUtc:toUtcSlot(e.target.value),offset:off});
@@ -667,6 +741,13 @@ function renderSettings(){
   if($("imp"))$("imp").onclick=async()=>{const v=hasLocal;let n=0;for(const k of v.kids){const id=uid("k");await D.saveKid({id,name:k.name,gender:k.gender||"m",theme:k.theme||"space",surahs:k.surahs,cycle:k.cycle||1,light:k.light==null?5:k.light,weekStart:v.weekStart==null?6:v.weekStart,start:k.start,created:Date.now()+n,halaqaId:null,teacherUid:null});
       const R=(v.rec||{})[k.id]||{};for(const d of Object.keys(R))await D.setDay(id,d,R[d]);n++}
     D.saveProfile({imported:true});$("impMsg").textContent=t("imported",n);$("imp").disabled=true};
+  if($("lkSet")){
+    $("lkSet").onclick=()=>{$("lkBox").innerHTML='<label class="field"><span class="sec-t">'+t("pin_new")+'</span><input id="lkA" type="password" inputmode="numeric" maxlength="4" autocomplete="off" dir="ltr"></label><label class="field"><span class="sec-t">'+t("pin_again")+'</span><input id="lkB" type="password" inputmode="numeric" maxlength="4" autocomplete="off" dir="ltr"></label><div class="row"><button class="btn primary" id="lkSave">'+t("save")+'</button></div><p class="msg err" id="lkMsg"></p>';
+      $("lkA").focus();
+      $("lkSave").onclick=async()=>{const a=$("lkA").value,b=$("lkB").value;if(!validPin(a)||a!==b){$("lkMsg").textContent=t("pin_bad");return}
+        await D.saveProfile({pin:await makePin(a)});renderSettings()}};
+    if($("lkOff"))$("lkOff").onclick=async()=>{await D.saveProfile({pin:null});renderSettings()};
+  }
   if($("bkOut")){
     const bm=(txt,cls)=>{$("bkMsg").className="msg "+(cls||"");$("bkMsg").textContent=txt};
     $("bkOut").onclick=()=>{const ks=kidsList();if(!ks.length){bm(t("bk_none"),"err");return}
@@ -724,7 +805,7 @@ function openEdit(id,self){
   if(!draft.surahs)draft.surahs=[];if(!draft.ranges)draft.ranges=[];go("edit");
 }
 function renderEdit(){
-  applyTheme(null);const d=draft,h=halaqaOf(d),tp=h&&planHas(h.plan),jn=ST.joins[d.id],live=ST.kids[d.id]||d,me=ST.user.uid,isOwner=!d.parentUid||d.parentUid===me;
+  applyTheme(null);const d=draft,h=halaqaOf(d),tp=!!teacherPlanOf(d),jn=ST.joins[d.id],live=ST.kids[d.id]||d,me=ST.user.uid,isOwner=!d.parentUid||d.parentUid===me;
   app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t(d._new?"add_kid":"edit_kid")+'</span><button class="iconbtn" id="eBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div>'+
    '<section class="card"><label class="field"><span class="sec-t">'+t("kid_name")+'</span><input id="eName" autocomplete="off" maxlength="30" value="'+esc(d.name)+'"></label>'+seg("eGender",[["m",t("boy")],["f",t("girl")]],d.gender)+(modeOf(d)==="kids"?'<label class="field"><span class="sec-t">'+t("gift_lbl")+'</span><input id="eGift" autocomplete="off" maxlength="60" placeholder="'+t("gift_ph")+'" value="'+esc(d.gift||"")+'"></label>':'')+'</section>'+
    '<section class="card"><div class="row"><label class="field" style="flex:0 0 7em"><span class="sec-t">'+t("age")+'</span><input id="eAge" type="number" inputmode="numeric" min="3" max="99" value="'+esc(d.age==null?"":d.age)+'"></label><label class="checkrow"><input type="checkbox" id="eSelf"'+(d.self?' checked':'')+'> '+t("self")+'</label></div><h3>'+t("ui_mode")+'</h3>'+seg("eMode",[["",t("m_auto")],["kids",t("m_kids")],["teens",t("m_teens")],["adults",t("m_adults")]],d.mode||"")+'</section>'+
@@ -785,7 +866,7 @@ function bindCoParent(k,me,redraw){
     catch(e){$("coBox").innerHTML='<p class="msg err">'+t("err_generic")+'</p>';$("coInv").disabled=false}};
 }
 async function saveDraft(quiet){
-  const d=draft;d.name=(d.name||"").trim();const h=halaqaOf(d),tp=h&&planHas(h.plan);
+  const d=draft;d.name=(d.name||"").trim();const h=halaqaOf(d),tp=!!teacherPlanOf(d);
   if(!d.name){$("eMsg").textContent=t("name_req");return false}
   if(!tp&&!planHas(d)&&!quiet){$("eMsg").textContent=t("surah_req");return false}
   const prev=ST.kids[d.id];

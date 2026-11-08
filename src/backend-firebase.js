@@ -151,6 +151,7 @@ export function createFirebaseBackend(cfg){
       return "ok";
     },
     async remindKid(kidId,lang){await addDoc(collection(db,"reminders"),{kidId,teacherUid:store.user.uid,lang,at:Date.now()});return "ok"},
+    async notifyNote(kidId,lang){await addDoc(collection(db,"reminders"),{kidId,teacherUid:store.user.uid,lang,at:Date.now(),kind:"note"});return "ok"},
     async deleteAccount(){
       const u=auth.currentUser;if(!u)return;
       for(const id of Object.keys(store.halaqas)){subStudents(id)}

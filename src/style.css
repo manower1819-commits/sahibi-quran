@@ -422,3 +422,5 @@ body{-webkit-font-smoothing:antialiased}
 .sheet-in h3{margin:6px 0 0;font-size:15px;color:var(--muted)}
 .qbasm{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.2;text-align:center;margin:8px 0 0}
 .warnc{color:var(--bad);font-weight:600}
+.remind-banner{display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--accent);color:var(--on-accent,#1c2421);border-radius:12px;padding:10px 12px;margin-bottom:8px;font-size:14px}
+.remind-banner .btn{flex:none}

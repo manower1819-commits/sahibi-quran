@@ -82,7 +82,8 @@ service cloud.firestore {
     // Teacher's "Remind" taps wait here; the scheduled job sends them and deletes them.
     match /reminders/{rid} {
       allow create: if signedIn() && request.resource.data.teacherUid == me()
-                    && request.resource.data.keys().hasOnly(['kidId', 'teacherUid', 'lang', 'at'])
+                    && request.resource.data.keys().hasOnly(['kidId', 'teacherUid', 'lang', 'at', 'kind'])
+                    && request.resource.data.get('kind', 'remind') in ['remind', 'note']
                     && get(/databases/$(database)/documents/kids/$(request.resource.data.kidId)).data.get('teacherUid', null) == me();
     }
 

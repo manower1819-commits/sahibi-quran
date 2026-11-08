@@ -303,3 +303,19 @@ test("reminders: only a teacher, only for their own student", async () => {
   await assertFails(setDoc(doc(db(U), "reminders/r2"), {kidId: "k1", teacherUid: U, lang: "ar", at: 1}));
   await assertFails(setDoc(doc(db(A), "reminders/r3"), {kidId: "k1", teacherUid: A, lang: "ar", at: 1}));
 });
+test("reminders: a teacher's note notification is allowed, other kinds and fields are not", async () => {
+  await seed(d => updateDoc(doc(d, "kids/k1"), {halaqaId: "hT", teacherUid: T}));
+  await assertSucceeds(setDoc(doc(db(T), "reminders/n1"), {kidId: "k1", teacherUid: T, lang: "ar", at: 1, kind: "note"}));
+  await assertSucceeds(setDoc(doc(db(T), "reminders/n2"), {kidId: "k1", teacherUid: T, lang: "ar", at: 1, kind: "remind"}));
+  await assertFails(setDoc(doc(db(T), "reminders/n3"), {kidId: "k1", teacherUid: T, lang: "ar", at: 1, kind: "spam"}));
+  await assertFails(setDoc(doc(db(T), "reminders/n4"), {kidId: "k1", teacherUid: T, lang: "ar", at: 1, kind: "note", body: "free text"}));
+  await assertFails(setDoc(doc(db(U), "reminders/n5"), {kidId: "k1", teacherUid: U, lang: "ar", at: 1, kind: "note"}), "not their student");
+});
+test("student plans: the teacher can store one per child in the class document and parents can read it", async () => {
+  const plan = {surahs: [], ranges: [[2, 1, 5]], cycle: 1, light: 5, start: "2026-11-08"};
+  await assertSucceeds(updateDoc(doc(db(T), "halaqas/hT"), {studentPlans: {k1: encode(plan)}}));
+  const got = decode((await assertSucceeds(getDoc(doc(db(A), "halaqas/hT")))).data());
+  assert.deepEqual(got.studentPlans.k1.ranges, [[2, 1, 5]]);
+  await assertFails(updateDoc(doc(db(A), "halaqas/hT"), {studentPlans: {k1: null}}), "a parent cannot change the class document");
+  await assertSucceeds(updateDoc(doc(db(T), "halaqas/hT"), {studentPlans: {k1: null}}));
+});

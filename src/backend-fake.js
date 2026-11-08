@@ -74,6 +74,7 @@ export function createFakeBackend(){
     async leaveCoParent(kidId){const k=db.kids[kidId];if(!k)return;k.parentUids=(k.parentUids||[]).filter(x=>x!==db.session);refresh()},
     async enablePush(){return wait("demo")},
     async remindKid(){return wait("ok")},
+    async notifyNote(){return wait("ok")},
     async deleteAccount(){const uid=db.session;Object.keys(db.halaqas).forEach(id=>{if(db.halaqas[id].teacherUid===uid)this.deleteHalaqa(id)});Object.keys(db.kids).forEach(id=>{if(db.kids[id].parentUid===uid){delete db.kids[id];delete db.days[id]}else if((db.kids[id].parentUids||[]).indexOf(uid)>-1)db.kids[id].parentUids=db.kids[id].parentUids.filter(x=>x!==uid)});delete db.users[uid];db.session=null;refresh()}
   };
 }
