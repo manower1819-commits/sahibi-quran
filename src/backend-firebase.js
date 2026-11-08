@@ -83,14 +83,21 @@ export function createFirebaseBackend(cfg){
     resetPw:email=>sendPasswordResetEmail(auth,email),
     saveProfile(p){if(!store.user)return Promise.resolve();Object.assign(store.profile,p);emit();return setDoc(doc(db,"users",store.user.uid),clean(p),{merge:true}).catch(err)},
     saveKid(k){const d=clean(k);delete d.id;const ex=store.kids[k.id];d.parentUid=ex&&ex.parentUid?ex.parentUid:store.user.uid;store.kids[k.id]=Object.assign({},k,d);emit();subDays(k.id);return setDoc(doc(db,"kids",k.id),encode(d),{merge:true})},
-    async deleteKid(id){const ds=await getDocs(collection(db,"kids",id,"days"));await Promise.all(ds.docs.map(d=>deleteDoc(d.ref)));await deleteDoc(doc(db,"kids",id))},
+    async deleteKid(id){const k=store.kids[id];
+      const ds=await getDocs(collection(db,"kids",id,"days"));await Promise.all(ds.docs.map(d=>deleteDoc(d.ref)));
+      // a pending join request, and the unused invite with its record, would otherwise outlive the child
+      if(k&&k.joinReq&&k.joinReq.hid)await deleteDoc(doc(db,"halaqas",k.joinReq.hid,"requests",id)).catch(()=>{});
+      const ps=await getDocs(collection(db,"kids",id,"private")).catch(()=>null);
+      if(ps)for(const p of ps.docs){const code=p.data().code;if(code)await deleteDoc(doc(db,"invites",code)).catch(()=>{});await deleteDoc(p.ref).catch(()=>{})}
+      await deleteDoc(doc(db,"kids",id))},
     subDays,subStudents,
     setDay(kidId,date,f){const m=store.days[kidId]||(store.days[kidId]={});m[date]=Object.assign({},m[date],f);emit();return setDoc(doc(db,"kids",kidId,"days",date),wire(f),{merge:true}).catch(err)},
     async saveHalaqa(h){const d=clean(h);delete d.id;d.teacherUid=store.user.uid;store.halaqas[h.id]=Object.assign({},h,d);emit();
       await setDoc(doc(db,"halaqas",h.id),encode(d),{merge:true});
       if(d.code){const cref=doc(db,"halaqaCodes",d.code),s=await getDoc(cref).catch(()=>null);if(!s||!s.exists())await setDoc(cref,{hid:h.id,teacherUid:store.user.uid});codeChecked.add(d.code)}},
-    async deleteHalaqa(id){const st=store.students[id]||{},h=store.halaqas[id];
-      await Promise.all(Object.keys(st).map(k=>setDoc(doc(db,"kids",k),{halaqaId:null,teacherUid:null},{merge:true}).catch(err)));
+    async deleteHalaqa(id){const h=store.halaqas[id];
+      const sq=await getDocs(query(collection(db,"kids"),where("teacherUid","==",store.user.uid),where("halaqaId","==",id)));
+      await Promise.all(sq.docs.map(d=>setDoc(d.ref,{halaqaId:null,teacherUid:null},{merge:true})));
       try{const rs=await getDocs(collection(db,"halaqas",id,"requests"));await Promise.all(rs.docs.map(d=>deleteDoc(d.ref)))}catch(e){err(e)}
       if(h&&h.code)await deleteDoc(doc(db,"halaqaCodes",h.code)).catch(err);
       await deleteDoc(doc(db,"halaqas",id))},
@@ -127,19 +134,23 @@ export function createFirebaseBackend(cfg){
       const A="ABCDEFGHJKMNPQRSTUVWXYZ23456789",rnd=crypto.getRandomValues(new Uint8Array(8));let code="";for(const x of rnd)code+=A[x%A.length];
       const exp=Date.now()+48*3600e3;
       await setDoc(doc(db,"invites",code),{kidId,ownerUid:uid,exp,claimedBy:null});
-      await updateDoc(doc(db,"kids",kidId),{inviteCode:code,parentUids:arrayUnion(uid)});
-      k.inviteCode=code;k.parentUids=Array.from(new Set([...(k.parentUids||[]),uid]));emit();return{ok:true,code,exp}},
+      await setDoc(doc(db,"kids",kidId,"private","invite"),{code});
+      await updateDoc(doc(db,"kids",kidId),{parentUids:arrayUnion(uid)});
+      k.parentUids=Array.from(new Set([...(k.parentUids||[]),uid]));emit();return{ok:true,code,exp}},
     async redeemCoInvite(code){code=String(code||"").trim().toUpperCase();const uid=store.user.uid;
       if(!/^[A-Z0-9]{8}$/.test(code))return{err:"notfound"};
       const iref=doc(db,"invites",code),s=await getDoc(iref);if(!s.exists())return{err:"notfound"};const inv=s.data();
       if(inv.exp<Date.now())return{err:"expired"};if(inv.claimedBy&&inv.claimedBy!==uid)return{err:"used"};
       if(!inv.claimedBy)await updateDoc(iref,{claimedBy:uid});
       await updateDoc(doc(db,"kids",inv.kidId),{parentUids:arrayUnion(uid),["parentNames."+uid]:String(store.profile.name||"").slice(0,30)});
-      await deleteDoc(iref).catch(err);return{ok:true}},
+      await deleteDoc(iref).catch(err);await deleteDoc(doc(db,"kids",inv.kidId,"private","invite")).catch(err);return{ok:true}},
     async removeCoParent(kidId,uid){const k=store.kids[kidId];if(!k||k.parentUid!==store.user.uid)return;
+      const pref=doc(db,"kids",kidId,"private","invite"),ps=await getDoc(pref).catch(()=>null);
+      if(ps&&ps.exists()&&ps.data().code)await deleteDoc(doc(db,"invites",ps.data().code)).catch(err);
+      if(ps&&ps.exists())await deleteDoc(pref).catch(err);
       await updateDoc(doc(db,"kids",kidId),{parentUids:arrayRemove(uid),["parentNames."+uid]:deleteField()});
       k.parentUids=(k.parentUids||[]).filter(x=>x!==uid);if(k.parentNames)delete k.parentNames[uid];emit()},
-    async leaveCoParent(kidId){const uid=store.user.uid;await updateDoc(doc(db,"kids",kidId),{parentUids:arrayRemove(uid)});delete store.kids[kidId];delete kB[kidId];emit()},
+    async leaveCoParent(kidId){const uid=store.user.uid;await updateDoc(doc(db,"kids",kidId),{parentUids:arrayRemove(uid),["parentNames."+uid]:deleteField()});delete store.kids[kidId];delete kB[kidId];emit()},
     async enablePush(target){
       try{if(!(await isSupported()))return /iPhone|iPad|iPod/.test(navigator.userAgent)&&!navigator.standalone?"ios-home":"unsupported"}catch(e){return "unsupported"}
       const perm=await Notification.requestPermission();if(perm!=="granted")return "denied";

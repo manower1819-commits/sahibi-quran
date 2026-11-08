@@ -880,7 +880,7 @@ async function saveDraft(quiet){
 function newCode(){const A="ABCDEFGHJKMNPQRSTUVWXYZ23456789";let s="";for(let i=0;i<6;i++)s+=A[Math.floor(Math.random()*A.length)];return s}
 function openHEdit(id){
   const h=id?ST.halaqas[id]:null;
-  draft=h?JSON.parse(JSON.stringify(h)):{id:uid("h"),name:"",teacherName:ST.profile.name||"",plan:null,_new:true};
+  draft=h?JSON.parse(JSON.stringify(h)):{id:"h"+Array.from(crypto.getRandomValues(new Uint8Array(12)),x=>x.toString(36).padStart(2,"0")).join(""),name:"",teacherName:ST.profile.name||"",plan:null,_new:true};
   draft._usePlan=planHas(draft.plan);
   draft._p=draft.plan?JSON.parse(JSON.stringify(draft.plan)):{surahs:[],ranges:[],cycle:1,light:5};
   if(!draft._p.ranges)draft._p.ranges=[];

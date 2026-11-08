@@ -64,7 +64,7 @@ export function createFakeBackend(){
     async createCoInvite(kidId){const k=db.kids[kidId];if(!k||k.parentUid!==db.session)return{err:"notowner"};
       const A="ABCDEFGHJKMNPQRSTUVWXYZ23456789";let code="";for(let i=0;i<8;i++)code+=A[Math.floor(Math.random()*A.length)];
       const exp=Date.now()+48*3600e3;db.invites[code]={kidId,ownerUid:db.session,exp,claimedBy:null};
-      k.inviteCode=code;k.parentUids=Array.from(new Set([...(k.parentUids||[]),db.session]));refresh();return{ok:true,code,exp}},
+      k.parentUids=Array.from(new Set([...(k.parentUids||[]),db.session]));refresh();return{ok:true,code,exp}},
     async redeemCoInvite(code){code=String(code||"").trim().toUpperCase();const inv=db.invites[code];if(!inv)return{err:"notfound"};
       if(inv.exp<Date.now())return{err:"expired"};if(inv.claimedBy&&inv.claimedBy!==db.session)return{err:"used"};
       const k=db.kids[inv.kidId];if(!k)return{err:"notfound"};

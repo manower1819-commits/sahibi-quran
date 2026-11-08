@@ -62,7 +62,12 @@ service cloud.firestore {
       }
     }
 
-    // Co-parent invites: the owner creates one (kids/{id}.inviteCode points at it); whoever holds the code may claim it once.
+    // The invite the owner last made for a child. Its code is kept in kids/{id}/private/invite, which only the parents can read
+    // (the child's own document is also read by the class teacher, who must never learn the code).
+    function inviteOf(kidId) {
+      return get(/databases/$(database)/documents/invites/$(get(/databases/$(database)/documents/kids/$(kidId)/private/invite).data.code)).data;
+    }
+    // Co-parent invites: the owner creates one (and records its code in kids/{id}/private/invite); whoever holds the code may claim it once.
     match /invites/{code} {
       allow get: if signedIn();
       allow create: if signedIn() && code.matches('[A-Z0-9]{8}')
@@ -104,9 +109,10 @@ service cloud.firestore {
       // A co-parent joins: the child names an invite that this user has claimed. Only parentUids/parentNames change,
       // and only this user is added (and may add their own display name).
       allow update: if signedIn() && !isParentOf(resource.data)
-                    && resource.data.get('inviteCode', null) != null
-                    && get(/databases/$(database)/documents/invites/$(resource.data.inviteCode)).data.claimedBy == me()
-                    && get(/databases/$(database)/documents/invites/$(resource.data.inviteCode)).data.kidId == kid
+                    && exists(/databases/$(database)/documents/kids/$(kid)/private/invite)
+                    && inviteOf(kid).claimedBy == me()
+                    && inviteOf(kid).kidId == kid
+                    && inviteOf(kid).exp > request.time.toMillis()
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parentUids', 'parentNames'])
                     && request.resource.data.parentUids.hasAll(resource.data.get('parentUids', [resource.data.parentUid]))
                     && request.resource.data.parentUids.toSet().difference(resource.data.get('parentUids', [resource.data.parentUid]).toSet()).hasOnly([me()])
@@ -123,6 +129,11 @@ service cloud.firestore {
                     && approved(request.resource.data.halaqaId, kid);
       // Only the owner deletes a child.
       allow delete: if signedIn() && resource.data.parentUid == me();
+
+      // Things only the parents may see (the invite code): not the class teacher.
+      match /private/{doc} {
+        allow read, write: if signedIn() && isParentOf(get(/databases/$(database)/documents/kids/$(kid)).data);
+      }
 
       match /days/{date} {
         function k() { return get(/databases/$(database)/documents/kids/$(kid)).data; }

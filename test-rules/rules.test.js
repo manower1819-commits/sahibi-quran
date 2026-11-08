@@ -196,12 +196,12 @@ test("invites: claimed once, by yourself, before it expires", async () => {
 });
 
 async function claimed(who = B, extra = {}) {
-  await seed(async d => { await setDoc(doc(d, "invites/GOOD2345"), inv(Object.assign({claimedBy: who}, extra))); await updateDoc(doc(d, "kids/k1"), {inviteCode: "GOOD2345"}); });
+  await seed(async d => { await setDoc(doc(d, "invites/GOOD2345"), inv(Object.assign({claimedBy: who}, extra))); await setDoc(doc(d, "kids/k1/private/invite"), {code: "GOOD2345"}); });
 }
 test("co-parent join: needs a claimed invite for this child, adds only yourself", async () => {
   const k = doc(db(B), "kids/k1");
   await assertFails(updateDoc(k, {parentUids: arrayUnion(B)}), "no invite on the child yet");
-  await seed(d => updateDoc(doc(d, "kids/k1"), {inviteCode: "GOOD2345"}));
+  await seed(d => setDoc(doc(d, "kids/k1/private/invite"), {code: "GOOD2345"}));
   await seed(d => setDoc(doc(d, "invites/GOOD2345"), inv()));
   await assertFails(updateDoc(k, {parentUids: arrayUnion(B)}), "invite not claimed");
   await claimed(S);
@@ -220,7 +220,8 @@ test("co-parent join: an invite for another child does not open this one", async
 });
 test("co-parent join: works for an older child that has no parentUids yet is covered by the owner's invite step", async () => {
   await seed(d => setDoc(doc(d, "kids/k3"), {name: "Old", parentUid: A}));
-  await assertSucceeds(updateDoc(doc(db(A), "kids/k3"), {inviteCode: "GOOD2345", parentUids: arrayUnion(A)}));
+  await assertSucceeds(setDoc(doc(db(A), "kids/k3/private/invite"), {code: "GOOD2345"}));
+  await assertSucceeds(updateDoc(doc(db(A), "kids/k3"), {parentUids: arrayUnion(A)}));
   await seed(d => setDoc(doc(d, "invites/GOOD2345"), inv({kidId: "k3", claimedBy: B})));
   await assertSucceeds(updateDoc(doc(db(B), "kids/k3"), {parentUids: arrayUnion(B)}));
 });
@@ -260,7 +261,7 @@ test("owner: removes co-parents and deletes the child; cannot remove themself fr
   await assertSucceeds(deleteDoc(doc(db(A), "kids/k1")));
 });
 test("a stranger is not a co-parent just because an invite exists", async () => {
-  await seed(async d => { await setDoc(doc(d, "invites/GOOD2345"), inv()); await updateDoc(doc(d, "kids/k1"), {inviteCode: "GOOD2345"}); });
+  await seed(async d => { await setDoc(doc(d, "invites/GOOD2345"), inv()); await setDoc(doc(d, "kids/k1/private/invite"), {code: "GOOD2345"}); });
   await assertFails(getDoc(doc(db(S), "kids/k1")));
   await assertFails(updateDoc(doc(db(S), "kids/k1"), {parentUids: arrayUnion(S)}));
 });
@@ -318,4 +319,32 @@ test("student plans: the teacher can store one per child in the class document a
   assert.deepEqual(got.studentPlans.k1.ranges, [[2, 1, 5]]);
   await assertFails(updateDoc(doc(db(A), "halaqas/hT"), {studentPlans: {k1: null}}), "a parent cannot change the class document");
   await assertSucceeds(updateDoc(doc(db(T), "halaqas/hT"), {studentPlans: {k1: null}}));
+});
+
+/* ---------- review finding: the invite code must not leak to a linked teacher (who could otherwise claim it and become a co-parent) ---------- */
+test("the invite code lives where only the parents can read it", async () => {
+  await seed(async d => {
+    await updateDoc(doc(d, "kids/k1"), {halaqaId: "hT", teacherUid: T});
+    await setDoc(doc(d, "invites/GOOD2345"), inv());
+    await setDoc(doc(d, "kids/k1/private/invite"), {code: "GOOD2345"});
+  });
+  const kid = (await assertSucceeds(getDoc(doc(db(T), "kids/k1")))).data();
+  assert.ok(!JSON.stringify(kid).includes("GOOD2345"), "the code must not be in the child's document");
+  await assertFails(getDoc(doc(db(T), "kids/k1/private/invite")), "the linked teacher cannot read it");
+  await assertFails(getDoc(doc(db(S), "kids/k1/private/invite")), "nor a stranger");
+  await assertSucceeds(getDoc(doc(db(A), "kids/k1/private/invite")), "the owner can");
+  await assertFails(setDoc(doc(db(T), "kids/k1/private/invite"), {code: "EVIL2345"}), "and only a parent can write it");
+});
+test("the code owner can still bring in the intended co-parent", async () => {
+  await seed(async d => { await setDoc(doc(d, "invites/GOOD2345"), inv({claimedBy: B})); await setDoc(doc(d, "kids/k1/private/invite"), {code: "GOOD2345"}); });
+  await assertSucceeds(updateDoc(doc(db(B), "kids/k1"), {parentUids: arrayUnion(B)}));
+});
+
+test("co-parent join: an invite past its expiry cannot be used to join, even if it was claimed in time", async () => {
+  await seed(async d => { await setDoc(doc(d, "invites/GOOD2345"), inv({claimedBy: B, exp: PAST})); await setDoc(doc(d, "kids/k1/private/invite"), {code: "GOOD2345"}); });
+  await assertFails(updateDoc(doc(db(B), "kids/k1"), {parentUids: arrayUnion(B)}));
+});
+test("co-parent join: without a recorded invite for the child nobody can join", async () => {
+  await seed(d => setDoc(doc(d, "invites/GOOD2345"), inv({claimedBy: B})));
+  await assertFails(updateDoc(doc(db(B), "kids/k1"), {parentUids: arrayUnion(B)}));
 });
