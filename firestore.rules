@@ -47,7 +47,7 @@ service cloud.firestore {
         function k() { return get(/databases/$(database)/documents/kids/$(kid)).data; }
         function isParent() { return k().parentUid == me(); }
         function isTeacher() { return k().get('teacherUid', null) == me(); }
-        function homeKeys() { return ['items', 'stars', 'weak', 'extra', 'nS', 'nF', 'nT', 'notes']; }
+        function homeKeys() { return ['items', 'stars', 'weak', 'extra', 'nS', 'nF', 'nT', 'notes', 'pw']; }
         function classKeys() { return ['items', 'tStars', 'tWeak', 'tNotes']; }
         function changed() {
           return resource == null ? request.resource.data.keys() : request.resource.data.diff(resource.data).affectedKeys();

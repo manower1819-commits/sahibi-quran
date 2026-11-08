@@ -4,7 +4,7 @@ import {makeBackup, parseBackup, cleanKid, cleanDay, BACKUP_APP, HOME_DAY_KEYS} 
 
 const KID = {id: "k1", name: "سارة", gender: "f", theme: "space", surahs: [112, 113], ranges: [[2, 255, 257]], cycle: 2, light: 5, weekStart: 6, start: "2026-11-07", created: 1700000000000,
   parentUid: "SECRET-UID", tokens: ["PUSH-TOKEN"], halaqaId: "h1", teacherUid: "t1", age: 7, look: 2, skin: 3};
-const DAYS = {k1: {"2026-11-07": {items: [[112, 1, 4]], stars: 3, weak: [112], extra: "x", nS: 67, nF: 1, nT: 10, notes: "n", tStars: 2, tNotes: "teacher", tWeak: [112], evil: "x"}, "bad-date": {stars: 1}}};
+const DAYS = {k1: {"2026-11-07": {items: [[112, 1, 4]], stars: 3, weak: [112], pw: [42], extra: "x", nS: 67, nF: 1, nT: 10, notes: "n", tStars: 2, tNotes: "teacher", tWeak: [112], evil: "x"}, "bad-date": {stars: 1}}};
 
 test("export keeps what the family owns and nothing private", () => {
   const b = makeBackup([KID], DAYS, 0);

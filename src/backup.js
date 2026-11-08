@@ -19,7 +19,7 @@ const aySpan = r => {
 };
 
 /* the keys of a day record that the family (not the teacher) owns: the same list as homeKeys() in firestore.rules */
-export const HOME_DAY_KEYS = ["items", "stars", "weak", "extra", "nS", "nF", "nT", "notes"];
+export const HOME_DAY_KEYS = ["items", "stars", "weak", "extra", "nS", "nF", "nT", "notes", "pw"];
 
 export function cleanKid(o) {
   if (!o || typeof o !== "object") return null;
@@ -48,6 +48,7 @@ export function cleanDay(r) {
   if (Array.isArray(r.items)) d.items = r.items.map(aySpan).filter(Boolean);
   if (int(r.stars, 0, 3) != null) d.stars = int(r.stars, 0, 3);
   if (Array.isArray(r.weak)) d.weak = [...new Set(r.weak.map(x => int(x, 1, 114)).filter(x => x != null))];
+  if (Array.isArray(r.pw)) d.pw = [...new Set(r.pw.map(x => int(x, 1, 604)).filter(x => x != null))];
   if (typeof r.extra === "string") d.extra = r.extra.slice(0, 200);
   if (typeof r.notes === "string") d.notes = r.notes.slice(0, 2000);
   if (int(r.nS, 1, 114) != null) d.nS = int(r.nS, 1, 114); else if (r.nS === "") d.nS = "";

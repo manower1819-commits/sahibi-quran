@@ -415,3 +415,9 @@ body{-webkit-font-smoothing:antialiased}
 .weeknav .lbl small{display:block;font-size:12px}
 .rangerow>*{min-width:0}
 .rangerow select,.rangerow input{width:100%;font-size:16px;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:12px;padding:9px 8px}
+
+.qtext{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.3;margin:0 0 10px;text-align:justify}
+.qn{font-size:.8em;color:var(--muted);white-space:nowrap}
+.sheet .qline{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.2;margin:0;text-align:center;min-height:1.2em}
+.sheet-in h3{margin:6px 0 0;font-size:15px;color:var(--muted)}
+.qbasm{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.2;text-align:center;margin:8px 0 0}

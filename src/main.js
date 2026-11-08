@@ -1,5 +1,5 @@
 import {S} from "./surahs.js";
-import {pad,iso,parse,addDays,diffDays,weekOfWs,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,itemAyat,itemPages} from "./planner.js";
+import {pad,iso,parse,addDays,diffDays,weekOfWs,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,pageSegments,itemPageList,itemAyat,itemPages} from "./planner.js";
 import {I,DAYS,DSHORT} from "./i18n.js";
 import {STAR,LOGO,THEMES,THEME_ORDER,giftSvg,ICON_GEAR,ICON_BACK} from "./themes.js";
 import {createFakeBackend} from "./backend-fake.js";
@@ -7,7 +7,9 @@ import {CONFIG} from "./config.js";
 import {avatar,LOOKS,SKINS} from "./avatar.js";
 import {PALETTES,PALETTE_ORDER} from "./palettes.js";
 import {juzCoverage,surahsOfJuz} from "./juz.js";
+import {pageStrugglers} from "./strength.js";
 import {makeBackup,parseBackup,MAX_FILE_BYTES} from "./backup.js";
+import {parseQuranText,quranTextComplete,splitBasmala,QURAN_TEXT_URL} from "./quran-text.js";
 import {PTS_STAR,PTS_WEEK,PTS_CHALLENGE,levelInfo,challengeFor,challengeProgress} from "./gamify.js";
 
 /* ================= backend ================= */
@@ -236,8 +238,9 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   if(!items.length)list='<p class="empty">'+t("no_review")+'</p>';
   else if(variant==="adults")list='<div class="rows">'+items.map(it=>{const lv=A.lv[it[0]],str=lv&&lv.n?t("strength")+' '+lv.avg.toFixed(1):t("nolv");return '<button class="item row'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'"><span class="q">'+itemLabel(it)+'</span><span class="m">'+(it[2]-it[1]+1)+' '+t("ayah")+' · '+str+'</span></button>'}).join("")+'</div><span class="hint">'+t("tap_weak_self")+'</span>';
   else list='<div class="items">'+items.map(it=>'<button class="item'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'">'+itemLabel(it)+'</button>').join("")+'</div><span class="hint">'+(teacherMode?t("tweak"):variant==="teens"||k.self?t("tap_weak_self"):t(k.gender==="f"?"tap_weak_f":"tap_weak"))+'</span>';
-  if(items.length)list+='<button class="btn small listen" data-listen>'+ICONS.play+t("listen")+'</button>';
-  if(isToday&&!teacherMode)list+='<div class="addrev makeup" hidden></div>';
+  if(items.length)list+='<div class="row"><button class="btn small listen" data-listen>'+ICONS.play+t("listen")+'</button><button class="btn small listen" data-text>'+ICONS.book+t("text_btn")+'</button></div>';
+  if(isToday&&!teacherMode)list+='<div class="addrev makeup" hidden></div><div class="addrev strength" hidden></div>';
+  if(items.length&&!teacherMode)list+='<details class="more pagesbox"><summary>'+t("pages_t")+'</summary><p class="hint">'+t("pages_hint")+'</p><div class="items">'+itemPageList(items).map(pg=>'<button type="button" class="item pg'+(((r.pw||[]).indexOf(pg)>-1)?' weak':'')+'" data-pg="'+pg+'" aria-pressed="'+((r.pw||[]).indexOf(pg)>-1)+'">'+t("page_n",pg.toLocaleString(L()==="en"?"en":"ar-EG"))+'</button>').join("")+'</div></details>';
   let html=head+(variant==="week"?'<div class="field"><div class="sec-t"><span>'+t("review")+'</span><span>'+(items.length?amt(items):'')+'</span></div>'+list+'</div>':list);
   const extras='<label class="field"><span class="sec-t">'+t("extra")+'</span><input data-f="extra" id="ex-'+date+'" autocomplete="off" placeholder="'+t("extra_ph")+'"></label>'+
       '<div class="field"><span class="sec-t">'+t("newm")+'</span><div class="newrow"><select class="sel" data-f="nS" id="ns-'+date+'" aria-label="'+t("new_surah")+'">'+surahOptions(+r.nS||0)+'</select><input data-f="nF" id="nf-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input data-f="nT" id="nt-'+date+'" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div><div class="addrev" hidden></div></div>'+
@@ -290,15 +293,34 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
       return}
   }
   makeupOffer();
+  // pages marked mistaken on 2+ different days in the last 3 weeks: offer, never impose, an extra review of that page tomorrow
+  const stBox=el.querySelector(".strength");
+  function strengthOffer(){
+    if(!stBox)return;stBox.hidden=true;stBox.innerHTML="";
+    if(teacherMode||childKid())return;
+    const tm=addDays(date,1),tItems=planFor(k,tm);
+    for(const c of pageStrugglers(ST.days[k.id]||{},date)){
+      const segs=pageSegments(c.page),key=k.id+":"+c.page+":"+c.last,ptxt=c.page.toLocaleString(L()==="en"?"en":"ar-EG");
+      if(justStr===key){stBox.hidden=false;stBox.innerHTML='<span>'+t("str_done",ptxt)+'</span>';return}
+      if((prefs.noStr||{})[key]||segs.every(s=>planCovers({surahs:[],ranges:tItems},s[0],s[1],s[2])))continue;
+      stBox.hidden=false;
+      stBox.innerHTML='<span>'+t("str_q",ptxt,c.count)+'</span><span class="row"><button type="button" class="btn small primary" data-sy>'+t("str_yes")+'</button><button type="button" class="btn small" data-sn>'+t("str_no")+'</button></span>';
+      stBox.querySelector("[data-sy]").onclick=()=>{justStr=key;setField(k,tm,{items:mergeItems(planFor(k,tm),segs)});strengthOffer()};
+      stBox.querySelector("[data-sn]").onclick=()=>{prefs.noStr=prefs.noStr||{};prefs.noStr[key]=1;savePrefs();strengthOffer()};
+      return}
+  }
+  strengthOffer();
   const lb=el.querySelector("[data-listen]");if(lb)lb.onclick=()=>openListen(items);
-  el.querySelectorAll(".item").forEach(b=>b.onclick=()=>{const rr=day(k,date)||{},arr=(rr[weakKey]||[]).slice(),n=+b.dataset.s,ix=arr.indexOf(n);if(ix>-1)arr.splice(ix,1);else arr.push(n);setField(k,date,{[weakKey]:arr});b.classList.toggle("weak",ix<0);b.setAttribute("aria-pressed",String(ix<0))});
+  const tb=el.querySelector("[data-text]");if(tb)tb.onclick=()=>openText(items);
+  el.querySelectorAll(".item.pg").forEach(b=>b.onclick=()=>{const rr=day(k,date)||{},arr=(rr.pw||[]).slice(),pg=+b.dataset.pg,ix=arr.indexOf(pg);if(ix>-1)arr.splice(ix,1);else arr.push(pg);arr.sort((x,y)=>x-y);setField(k,date,{pw:arr});b.classList.toggle("weak",ix<0);b.setAttribute("aria-pressed",String(ix<0));strengthOffer()});
+  el.querySelectorAll(".item[data-s]").forEach(b=>b.onclick=()=>{const rr=day(k,date)||{},arr=(rr[weakKey]||[]).slice(),n=+b.dataset.s,ix=arr.indexOf(n);if(ix>-1)arr.splice(ix,1);else arr.push(n);setField(k,date,{[weakKey]:arr});b.classList.toggle("weak",ix<0);b.setAttribute("aria-pressed",String(ix<0))});
   const sKey=teacherMode?"tStars":"stars",row=el.querySelector(".stars");
   row.querySelectorAll("button").forEach(b=>b.onclick=()=>{const cur=+((day(k,date)||{})[sKey]||0),n=+b.dataset.n,v=cur===n?0:n;setField(k,date,{[sKey]:v});paint(row,v);
     if(!teacherMode)afterRate(k,w,i,v,cur,b)});
   paint(row,+(r[sKey]||0));
   return el;
 }
-let justAdded="",justMade="";
+let justAdded="",justMade="",justStr="";
 let afterRate=(k,w,i,v,cur,b)=>{if($("path"))renderPath(k,w);if(v>cur){burst(b);const st=$("st-"+i);if(st)st.classList.add("pulse")}};
 function renderDays(k,w,teacherMode){
   const box=$("days");box.innerHTML="";
@@ -617,7 +639,7 @@ function renderSettings(){
    '<section class="card"><h2 class="sh">'+ICONS.info+t("bk_title")+'</h2><p class="about">'+t("bk_t")+'</p><div class="row"><button class="btn" id="bkOut">'+t("bk_export")+'</button><button class="btn" id="bkIn">'+t("bk_import")+'</button></div><input type="file" id="bkFile" accept="application/json,.json" hidden><p class="msg" id="bkMsg"></p><div id="bkConf"></div></section>'+
    (hasLocal?'<section class="card"><button class="btn" id="imp">'+t("import_local")+'</button><p class="msg ok" id="impMsg"></p></section>':''))+
    '<section class="card"><h2 class="sh">'+ICONS.user+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
-   '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><p class="hint">'+t("audio_src")+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
+   '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><p class="hint">'+t("audio_src")+'</p><p class="hint">'+tanzilLine()+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
   $("sDone").onclick=()=>{go("main");scrollToday()};
   if($("cdOff"))$("cdOff").onclick=()=>{prefs.child=null;savePrefs();renderSettings()};
   $("nOn").onclick=async()=>{const m=$("nMsg");m.className="msg";try{const r=await D.enablePush(ck?{kidId:ck.id}:{});m.className="msg "+(r==="ok"?"ok":"err");m.textContent=t({ok:"notif_ok",denied:"notif_denied",unsupported:"notif_unsupported","ios-home":"notif_ios",demo:"notif_demo"}[r]||"err_generic")}catch(e){m.className="msg err";m.textContent=t("err_generic")}};
@@ -861,6 +883,25 @@ function renderRecord(k,o){
   $("rBack").onclick=()=>o.teacher?go("shist",{hid:o.hid,kid:k.id}):go("hist");$("rPdf").onclick=()=>window.print();
 }
 
+/* ================= Quran text (Tanzil, bundled; fetched the first time it is needed) ================= */
+let QT=null,QTp=null;
+function loadQuran(){
+  if(QT)return Promise.resolve(QT);
+  return QTp||(QTp=fetch(QURAN_TEXT_URL).then(r=>{if(!r.ok)throw new Error("http "+r.status);return r.text()}).then(txt=>{
+    const mp=parseQuranText(txt);if(!quranTextComplete(mp))throw new Error("quran text incomplete");QT=mp;return mp}).catch(e=>{QTp=null;throw e}));
+}
+const ayahShown=(s,a)=>{const x=QT&&QT.get(s+":"+a);return x?splitBasmala(s,a,x,QT.get("1:1")):{basmala:null,rest:""}};
+const tanzilLine=()=>t("tanzil_src")+' <a href="https://tanzil.net" target="_blank" rel="noopener">tanzil.net</a>';
+function openText(items){
+  const ov=document.createElement("div");ov.className="sheet";ov.setAttribute("role","dialog");ov.setAttribute("aria-modal","true");ov.setAttribute("aria-label",t("text_t"));
+  ov.innerHTML='<div class="sheet-in"><div class="row between"><h2>'+t("text_t")+'</h2><button class="btn" id="qClose">'+t("close")+'</button></div><div id="qBody"><p class="status">'+t("loading")+'</p></div><p class="hint">'+tanzilLine()+'</p></div>';
+  document.body.appendChild(ov);$("qClose").onclick=()=>ov.remove();$("qClose").focus();
+  loadQuran().then(()=>{if(!ov.isConnected)return;
+    $("qBody").innerHTML=items.map(it=>{const xs=range(it[1],it[2]).map(a=>[a,ayahShown(it[0],a)]),b=xs[0][1].basmala;
+      return '<h3>'+itemLabel(it)+'</h3>'+(b?'<p class="qbasm">'+esc(b)+'</p>':'')+'<p class="qtext">'+xs.map(([a,x])=>esc(x.rest)+' <span class="qn">\uFD3F'+a.toLocaleString("ar-EG")+'\uFD3E</span>').join(" ")+'</p>'}).join("")})
+  .catch(()=>{if(ov.isConnected)$("qBody").innerHTML='<p class="msg err">'+t("text_err")+'</p>'});
+}
+
 /* ================= listening (alquran.cloud / Islamic Network CDN) ================= */
 const RECITERS=[["ar.husary",128,"rc_husary"],["ar.alafasy",128,"rc_alafasy"],["ar.minshawi",128,"rc_minshawi"],["ar.abdulbasitmurattal",192,"rc_abdulbasit"]];
 const AYAH0=(()=>{const a=[0];for(let i=0;i<114;i++)a.push(a[i]+S[i][2]);return a})(); // global number of ayah 1 of surah n = AYAH0[n-1]+1
@@ -874,9 +915,11 @@ function openListen(items){
    '<div class="field"><span class="sec-t">'+t("r_mode")+'</span>'+seg("lMode",[["ayah",t("m_ayah")],["full",t("m_full")]],pr.mode)+'</div>'+
    '<div class="field" id="lRepF"'+(pr.mode==="ayah"?'':' hidden')+'><span class="sec-t">'+t("repeat")+'</span>'+seg("lRep",[[1,t("x_once")],[3,t("x_times",3)],[5,t("x_times",5)],[10,t("x_times",10)]],pr.rep)+'</div>'+
    '<div class="items" id="lItems">'+items.map((it,j)=>'<button class="item" data-j="'+j+'">'+itemLabel(it)+'</button>').join("")+'</div>'+
+   '<p class="qline" id="lText" aria-live="off"></p>'+
+   '<div class="field"><button type="button" class="btn" id="lWarm">'+t("warm_btn")+'</button><span class="hint" id="lWarmMsg">'+t("warm_hint")+'</span></div>'+
    '<p class="now" id="lNow" aria-live="polite"></p><div class="row"><button class="btn accent big" id="lPlay">'+t("play")+'</button><button class="btn" id="lStop">'+t("stop")+'</button></div>'+
    '<p class="hint">'+t("audio_src")+'</p></div>';
-  document.body.appendChild(ov);player.el=ov;
+  document.body.appendChild(ov);player.el=ov;loadQuran().catch(()=>{});
   const segBind=(id,f)=>$(id).querySelectorAll("button").forEach(b=>b.onclick=()=>{$(id).querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));f(b.dataset.v)});
   $("lRc").onchange=e=>{pr.rc=e.target.value;savePrefs();if(player.on)playCur()};
   segBind("lMode",v=>{pr.mode=v;savePrefs();$("lRepF").hidden=v!=="ayah"});
@@ -886,9 +929,35 @@ function openListen(items){
   const start=()=>{if(!player.queue.length)build(0);player.on=true;playCur()};
   $("lPlay").onclick=()=>{const a=player.audio;if(player.on&&a&&!a.paused){a.pause();$("lPlay").textContent=t("play");return}if(player.on&&a&&a.paused&&a.src){a.play().catch(err);$("lPlay").textContent=t("pause");return}build(0);start()};
   $("lStop").onclick=()=>stopListen(false);
-  $("lClose").onclick=()=>stopListen(true);
+  $("lClose").onclick=()=>{warmRun++;stopListen(true)};
+  $("lWarm").onclick=async()=>{
+    if(warming){warmRun++;return}
+    warming=true;$("lWarm").textContent=t("warm_cancel");
+    const msg=$("lWarmMsg"),r=await prewarmAudio(items,prefs.audio.rc,(ok,fail,total)=>{if($("lWarmMsg"))$("lWarmMsg").textContent=t("warm_prog",ok+fail,total)});
+    warming=false;if(!$("lWarm"))return;$("lWarm").textContent=t("warm_btn");
+    msg.textContent=r.cancelled?t("warm_stopped",r.ok,r.total):r.fail?t("warm_part",r.ok,r.total,r.fail):t("warm_done",r.ok,r.total)+' '+t("warm_note")};
   const err=()=>{$("lNow").textContent=t("audio_err");player.on=false;$("lPlay").textContent=t("play")};
   player.err=err;$("lClose").focus();
+}
+/* Best effort: let the browser download today's ayat now so they play from its HTTP cache later.
+   The audio CDN sends no CORS headers, so the Cache API cannot be used; an Audio element is what fills the cache
+   (a fetch() in no-cors mode was measured not to help). The browser may still evict the files. */
+let warmRun=0,warming=false;
+async function prewarmAudio(items,rc,on){
+  const run=++warmRun,list=[];
+  items.forEach(it=>{for(let a=it[1];a<=it[2];a++)list.push([it[0],a])});
+  let ok=0,fail=0,i=0;const keep=[];
+  const one=([s,a])=>new Promise(res=>{
+    const el=new Audio();el.preload="auto";keep.push(el);let done=false,tm=null;
+    const fin=g=>{if(done)return;done=true;clearTimeout(tm);el.onprogress=el.oncanplaythrough=el.onloadedmetadata=el.onerror=null;el.removeAttribute("src");el.load();res(g)};
+    const chk=()=>{try{const b=el.buffered;if(isFinite(el.duration)&&b.length&&b.end(b.length-1)>=el.duration-0.3)fin(true)}catch(e){}};
+    el.onprogress=chk;el.oncanplaythrough=chk;el.onloadedmetadata=chk;el.onerror=()=>fin(false);
+    tm=setTimeout(()=>fin(false),30000);
+    el.src=ayahUrl(rc,s,a);
+  });
+  const worker=async()=>{while(i<list.length&&run===warmRun){const x=list[i++];(await one(x))?ok++:fail++;on(ok,fail,list.length)}};
+  await Promise.all([worker(),worker()]);
+  return{ok,fail,total:list.length,cancelled:run!==warmRun};
 }
 function playCur(){
   const q=player.queue[player.i];if(!q){stopListen(false);return}
@@ -896,13 +965,14 @@ function playCur(){
     player.audio.onended=()=>{const pr=prefs.audio;player.rep++;if(pr.mode!=="ayah"||player.rep>=pr.rep){player.rep=0;player.i++}playCur()};
     player.audio.onerror=()=>player.err&&player.err()}
   player.audio.src=ayahUrl(prefs.audio.rc,q.s,q.a);player.audio.play().then(()=>{if($("lPlay"))$("lPlay").textContent=t("pause")}).catch(()=>player.err&&player.err());
+  if($("lText"))$("lText").textContent=ayahShown(q.s,q.a).rest;
   if($("lNow"))$("lNow").textContent=t("now_ayah",sName(q.s),q.a)+(prefs.audio.mode==="ayah"&&prefs.audio.rep>1?' · '+(player.rep+1)+'/'+prefs.audio.rep:'');
   if(player.el)player.el.querySelectorAll("#lItems .item").forEach(b=>b.classList.toggle("on",+b.dataset.j===q.j));
   const nx=player.queue[player.i+1];if(nx){const pre=new Audio();pre.preload="auto";pre.src=ayahUrl(prefs.audio.rc,nx.s,nx.a)}
 }
 function stopListen(close){
   player.on=false;player.queue=[];player.i=0;player.rep=0;if(player.audio){player.audio.pause();player.audio.removeAttribute("src");player.audio.load()}
-  if($("lPlay"))$("lPlay").textContent=t("play");if($("lNow"))$("lNow").textContent="";
+  if($("lPlay"))$("lPlay").textContent=t("play");if($("lNow"))$("lNow").textContent="";if($("lText"))$("lText").textContent="";
   if(player.el)player.el.querySelectorAll("#lItems .item").forEach(b=>b.classList.remove("on"));
   if(close&&player.el){player.el.remove();player.el=null}
 }

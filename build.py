@@ -4,7 +4,7 @@ cfgp=os.path.join(R,'config.local.json')
 cfg=json.load(open(cfgp)) if os.path.exists(cfgp) else {"firebase":None,"region":"","vapidKey":""}
 FBV="12.4.0"
 css=open(os.path.join(R,'src/style.css'),encoding='utf8').read()
-FONTS='<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Lalezar&family=Readex+Pro:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Baloo+Bhaijaan+2:wght@600;700;800&display=swap">'
+FONTS='<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Amiri+Quran&family=Lalezar&family=Readex+Pro:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Baloo+Bhaijaan+2:wght@600;700;800&display=swap">'
 import base64
 DEVH=471
 def bundle(demo,out):
@@ -22,7 +22,7 @@ open(os.path.join(R,'dist/preview.html'),'w',encoding='utf8').write(prev)
 # ---------- hosting build ----------
 P=os.path.join(R,'dist/public')
 if os.path.exists(P): shutil.rmtree(P)
-os.makedirs(P); shutil.copytree(os.path.join(R,'public/icons'),os.path.join(P,'icons'));shutil.copytree(os.path.join(R,'public/brand'),os.path.join(P,'brand'))
+os.makedirs(P); shutil.copytree(os.path.join(R,'public/icons'),os.path.join(P,'icons'));shutil.copytree(os.path.join(R,'public/brand'),os.path.join(P,'brand'));shutil.copy(os.path.join(R,'public/quran-uthmani.txt'),os.path.join(P,'quran-uthmani.txt'));shutil.copy(os.path.join(R,'public/quran-uthmani.txt'),os.path.join(R,'dist/quran-uthmani.txt'))
 bundle(False,'dist/public/app.js')
 head=('<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
  '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'

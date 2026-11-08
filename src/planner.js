@@ -28,6 +28,16 @@ export function planUnits(plan){
     .sort((x,y)=>x[0]-y[0]||x[1]-y[1]).forEach(r=>{const lo=Math.max(r[1],(last[r[0]]||0)+1);if(lo<=r[2]){out.push([r[0],lo,r[2]]);last[r[0]]=r[2]}});
   return out.sort((x,y)=>x[0]-y[0]||x[1]-y[1]);
 }
+/* ---------- mushaf pages (604, Madani): PAGE_START[p-1] is the global number of page p's first ayah ---------- */
+export function pageOfAyah(n,a){const g=AY0[n-1]+a;let lo=0,hi=603;while(lo<hi){const mid=(lo+hi+1)>>1;if(PAGE_START[mid]<=g)lo=mid;else hi=mid-1}return lo+1}
+/* the [surah,from,to] pieces printed on page p (a page can hold the end of one surah and the start of the next) */
+export function pageSegments(p){
+  const a0=PAGE_START[p-1],a1=p<604?PAGE_START[p]-1:6236,out=[];
+  for(let s=1;s<=114;s++){const lo=AY0[s-1]+1,hi=AY0[s];if(hi<a0||lo>a1)continue;out.push([s,Math.max(a0,lo)-AY0[s-1],Math.min(a1,hi)-AY0[s-1]])}
+  return out;
+}
+/* sorted page numbers touched by a list of items */
+export function itemPageList(items){const set=new Set();items.forEach(([n,f,t])=>{for(let q=pageOfAyah(n,f);q<=pageOfAyah(n,t);q++)set.add(q)});return[...set].sort((a,b)=>a-b)}
 /* true when every ayah of n:f-t is already in the plan */
 export function planCovers(plan,n,f,t){const us=planUnits(plan).filter(u=>u[0]===n);for(let a=f;a<=t;a++)if(!us.some(u=>a>=u[1]&&a<=u[2]))return false;return true}
 /* The plan's surahs/ranges after adding n:f-t. Touching or overlapping ranges of the same surah are merged;
