@@ -6,6 +6,7 @@
       parents at their reminder time, teachers at their summary time.
    GitHub schedules can run late, so each reminder is "due and not yet sent today" rather than an exact slot. */
 const admin=require("firebase-admin");
+const {throttled,fieldFor}=require("./throttle");
 admin.initializeApp({credential:admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))});
 const db=admin.firestore(),FV=admin.firestore.FieldValue;
 const LATE_MAX=180; // minutes: skip a reminder that is more than 3 hours overdue
@@ -77,7 +78,10 @@ async function main(){
     try{
       const kref=db.collection("kids").doc(String(x.kidId)),k=await kref.get();
       if(k.exists&&k.data().teacherUid===x.teacherUid&&Date.now()-(x.at||0)<6*3600e3){
-        const kd=k.data(),uids=[...new Set([kd.parentUid,...(kd.parentUids||[])].filter(Boolean))],targets=[{ref:kref,tokens:kd.tokens}];let lang=x.lang||"ar";
+        const kd=k.data(),fld=fieldFor(x.kind);
+        if(throttled(kd[fld],Date.now()))continue; // already notified this family of this kind within the hour (the finally below still removes the queue entry)
+        await kref.update({[fld]:Date.now()});
+        const uids=[...new Set([kd.parentUid,...(kd.parentUids||[])].filter(Boolean))],targets=[{ref:kref,tokens:kd.tokens}];let lang=x.lang||"ar";
         for(const pid of uids){const pref=db.collection("users").doc(pid),p=await pref.get(),pu=p.exists?p.data():{};if(pid===kd.parentUid)lang=pu.lang||lang;targets.push({ref:pref,tokens:pu.tokens})}
         n+=await send(targets,tx(lang,x.kind==="note"?"n_t":"t_t"),x.kind==="note"?tx(lang,"n_b",kd.name||""):tx(lang,kd.gender==="f"?"t_bf":"t_b",kd.name||""));
       }

@@ -14,7 +14,7 @@ const db = uid => env.authenticatedContext(uid).firestore();
 const seed = fn => env.withSecurityRulesDisabled(async ctx => fn(ctx.firestore()));
 const FAR = Date.now() + 48 * 3600e3, PAST = Date.now() - 1000;
 const NOW = () => Timestamp.now(), DAYS_AGO = n => Timestamp.fromMillis(Date.now() - n * 864e5);
-const approvedReq = (o = {}) => Object.assign({kidId: "k1", parentUid: A, teacherUid: T, kidName: "Sara", status: "approved", at: 1, decidedAt: NOW()}, o);
+const approvedReq = (o = {}) => Object.assign({kidId: "k1", parentUid: A, teacherUid: T, kidName: "Sara", status: "approved", at: Date.now(), decidedAt: NOW()}, o);
 
 before(async () => {
   env = await initializeTestEnvironment({projectId: "demo-sahibi", firestore: {rules: readFileSync(new URL("../firestore.rules", import.meta.url), "utf8")}});
@@ -67,7 +67,7 @@ test("class codes: only a teacher registers a code for their own class", async (
 });
 
 /* ---------- join requests ---------- */
-const req = (o = {}) => Object.assign({kidId: "k1", parentUid: A, teacherUid: T, kidName: "Sara", status: "pending", at: 1}, o);
+const req = (o = {}) => Object.assign({kidId: "k1", parentUid: A, teacherUid: T, kidName: "Sara", status: "pending", at: Date.now()}, o);
 test("requests: the child's parent can ask; nobody else, nothing but 'pending'", async () => {
   await assertSucceeds(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req()));
 });
@@ -364,4 +364,41 @@ test("co-parent join: an invite past its expiry cannot be used to join, even if 
 test("co-parent join: without a recorded invite for the child nobody can join", async () => {
   await seed(d => setDoc(doc(d, "invites/GOOD2345"), inv({claimedBy: B})));
   await assertFails(updateDoc(doc(db(B), "kids/k1"), {parentUids: arrayUnion(B)}));
+});
+
+/* ---------- hardening after the rules review ---------- */
+test("requests: a request must carry a numeric time", async () => {
+  await assertFails(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req({at: "yesterday"})));
+  await assertFails(setDoc(doc(db(A), "halaqas/hT/requests/k1"), (({at, ...rest}) => rest)(req())), "no time at all");
+  await assertSucceeds(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req({at: Date.now()})));
+});
+test("requests: the teacher cannot decide a request older than 30 days (nor revive an old one)", async () => {
+  await seed(async d => {
+    await setDoc(doc(d, "halaqas/hT/requests/k1"), req({at: Date.now() - 31 * 864e5}));
+    await setDoc(doc(d, "kids/k2"), {name: "Fresh", parentUid: A, parentUids: [A]});
+    await setDoc(doc(d, "halaqas/hT/requests/k2"), req({kidId: "k2", at: Date.now() - 29 * 864e5}));
+  });
+  await assertFails(updateDoc(doc(db(T), "halaqas/hT/requests/k1"), {status: "approved", decidedAt: serverTimestamp()}), "31 days old");
+  await assertFails(updateDoc(doc(db(T), "halaqas/hT/requests/k1"), {status: "rejected", decidedAt: serverTimestamp()}));
+  await assertSucceeds(updateDoc(doc(db(T), "halaqas/hT/requests/k2"), {status: "approved", decidedAt: serverTimestamp()}), "29 days old is fine");
+  await assertSucceeds(deleteDoc(doc(db(T), "halaqas/hT/requests/k1")), "the teacher can still delete an old request");
+});
+test("requests: after linking, the teacher can remove the approved request", async () => {
+  await seed(d => setDoc(doc(d, "halaqas/hT/requests/k1"), approvedReq()));
+  await assertSucceeds(updateDoc(doc(db(T), "kids/k1"), {halaqaId: "hT", teacherUid: T}));
+  await assertSucceeds(deleteDoc(doc(db(T), "halaqas/hT/requests/k1")));
+  await assertFails(updateDoc(doc(db(T), "kids/k1"), {halaqaId: null, teacherUid: T}), "and it cannot be used to re-link something else afterwards");
+});
+test("co-parent join: the display name is a string of at most 30 characters", async () => {
+  const k = () => doc(db(B), "kids/k1");
+  await claimed(B);
+  await assertFails(updateDoc(k(), {parentUids: arrayUnion(B), "parentNames.coB": "x".repeat(31)}), "too long");
+  await assertFails(updateDoc(k(), {parentUids: arrayUnion(B), "parentNames.coB": {a: 1}}), "not a string");
+  await assertSucceeds(updateDoc(k(), {parentUids: arrayUnion(B), "parentNames.coB": "x".repeat(30)}));
+});
+
+test("requests: a request cannot be dated in the future (it would never expire)", async () => {
+  await assertFails(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req({at: Date.now() + 40 * 864e5})), "40 days ahead");
+  await assertFails(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req({at: Date.now() + 3600e3})), "an hour ahead is more than clock skew");
+  await assertSucceeds(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req({at: Date.now() + 60e3})), "a minute of clock skew is fine");
 });

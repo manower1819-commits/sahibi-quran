@@ -53,8 +53,11 @@ service cloud.firestore {
                       && request.resource.data.teacherUid == halaqa(hid).teacherUid
                       && request.resource.data.status == 'pending'
                       && request.resource.data.kidName is string && request.resource.data.kidName.size() <= 30
+                      && request.resource.data.at is number && request.resource.data.at <= request.time.toMillis() + 600000
                       && isParentOf(get(/databases/$(database)/documents/kids/$(kidId)).data);
+        // A request can be decided within 30 days of being made; an old forgotten one cannot be revived by the teacher.
         allow update: if signedIn() && halaqa(hid).teacherUid == me()
+                      && resource.data.at is number && resource.data.at > request.time.toMillis() - 2592000000
                       && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedAt'])
                       && request.resource.data.decidedAt == request.time
                       && request.resource.data.status in ['approved', 'rejected'];
@@ -116,7 +119,9 @@ service cloud.firestore {
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parentUids', 'parentNames'])
                     && request.resource.data.parentUids.hasAll(resource.data.get('parentUids', [resource.data.parentUid]))
                     && request.resource.data.parentUids.toSet().difference(resource.data.get('parentUids', [resource.data.parentUid]).toSet()).hasOnly([me()])
-                    && request.resource.data.get('parentNames', {}).diff(resource.data.get('parentNames', {})).affectedKeys().hasOnly([me()]);
+                    && request.resource.data.get('parentNames', {}).diff(resource.data.get('parentNames', {})).affectedKeys().hasOnly([me()])
+                    && (!(me() in request.resource.data.get('parentNames', {}))
+                        || (request.resource.data.parentNames[me()] is string && request.resource.data.parentNames[me()].size() <= 30));
       // The teacher can take a student out of the class, or put an approved, currently unassigned child into it.
       allow update: if signedIn() && resource.data.get('teacherUid', null) == me()
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['halaqaId', 'teacherUid'])

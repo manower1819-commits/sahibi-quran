@@ -34,7 +34,9 @@ export function createFirebaseBackend(cfg){
     sub("halaqas",()=>onSnapshot(query(collection(db,"halaqas"),where("teacherUid","==",u.uid)),s=>{
       const m=toMap(s);store.halaqas=m;
       Object.values(m).forEach(h=>{ensureCode(h);
-        sub("rq:"+h.id,()=>onSnapshot(query(collection(db,"halaqas",h.id,"requests"),where("status","==","pending")),rs=>{store.requests[h.id]=rs.docs.map(d=>Object.assign({id:d.id},d.data())).sort((a,b)=>(a.at||0)-(b.at||0));emit()},err))});
+        sub("rq:"+h.id,()=>onSnapshot(query(collection(db,"halaqas",h.id,"requests"),where("status","==","pending")),rs=>{const all=rs.docs.map(d=>Object.assign({id:d.id},d.data()));
+          all.filter(stale).forEach(x=>deleteDoc(doc(db,"halaqas",h.id,"requests",x.id)).catch(err));
+          store.requests[h.id]=all.filter(x=>!stale(x)).sort((a,b)=>(a.at||0)-(b.at||0));emit()},err))});
       one()},e=>{err(e);one()}));
   });
 
@@ -60,6 +62,7 @@ export function createFirebaseBackend(cfg){
         }catch(e){err(e)}
         delete store.joins[k.id];emit();return;
       }
+      if(r.status==="pending"&&stale(r)){delete store.joins[k.id];emit();return updateDoc(doc(db,"kids",k.id),{joinReq:null}).then(()=>deleteDoc(s.ref)).catch(err)}
       store.joins[k.id]={hid:jr.hid,name:jr.name||"",status:r.status};emit();
     },err));
   }
@@ -74,6 +77,8 @@ export function createFirebaseBackend(cfg){
   }
   const clean=o=>JSON.parse(JSON.stringify(o));
   const wire=o=>encode(clean(o)); // what is written to Firestore (see codec.js)
+  const STALE_MS=30*864e5; // the rules let a teacher decide a request only within 30 days of its creation
+  const stale=r=>typeof r.at!=="number"||Date.now()-r.at>STALE_MS;
   return {
     kind:"firebase",store,
     onChange(f){listeners.add(f);return()=>listeners.delete(f)},
@@ -109,7 +114,7 @@ export function createFirebaseBackend(cfg){
     async requestJoin(kidId,code){const h=await this.findHalaqa(code);if(!h)return{err:"notfound"};
       const k=store.kids[kidId],rref=doc(db,"halaqas",h.id,"requests",kidId);
       const ex=await getDoc(rref).catch(()=>null);
-      if(ex&&ex.exists()){if(ex.data().status==="pending"){return{ok:true,pending:true,name:h.name}}await deleteDoc(rref)}
+      if(ex&&ex.exists()){if(ex.data().status==="pending"&&!stale(ex.data())){return{ok:true,pending:true,name:h.name}}await deleteDoc(rref)}
       await setDoc(rref,{kidId,parentUid:store.user.uid,teacherUid:h.teacherUid,kidName:String((k&&k.name)||"").slice(0,30),status:"pending",at:Date.now()});
       const jr={hid:h.id,name:h.name||""};await setDoc(doc(db,"kids",kidId),{joinReq:jr},{merge:true});
       if(k)k.joinReq=jr;store.joins[kidId]={hid:h.id,name:h.name||"",status:"pending"};emit();return{ok:true,pending:true,name:h.name}},
@@ -120,6 +125,8 @@ export function createFirebaseBackend(cfg){
       await updateDoc(rref,{status:approve?"approved":"rejected",decidedAt:serverTimestamp()});
       let linked=false;
       if(approve){try{await updateDoc(doc(db,"kids",kidId),{halaqaId:hid,teacherUid:store.user.uid});linked=true}catch(e){err(e)}}
+      // once linked, the approved request has done its job: remove it so it cannot be reused later (the parent's app sees it gone and tidies up)
+      if(linked)await deleteDoc(rref).catch(err);
       store.requests[hid]=(store.requests[hid]||[]).filter(r=>r.id!==kidId);emit();return{linked}},
     async leaveHalaqa(kidId){const k=store.kids[kidId],hid=k&&k.halaqaId;
       if(hid)await deleteDoc(doc(db,"halaqas",hid,"requests",kidId)).catch(()=>{});
