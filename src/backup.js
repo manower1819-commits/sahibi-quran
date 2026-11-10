@@ -33,6 +33,7 @@ export function cleanKid(o) {
     weekStart: [0, 1, 6].includes(Number(o.weekStart)) ? Number(o.weekStart) : 6,
     self: o.self === true, look: int(o.look, 0, 50) || 0, skin: int(o.skin, 0, 20) == null ? 1 : int(o.skin, 0, 20),
   };
+  if (Number(o.algo) === 2) { k.algo = 2; k.light = -1; }
   if (str(o.palette, 20)) k.palette = str(o.palette, 20);
   if (int(o.age, 3, 99) != null) k.age = int(o.age, 3, 99);
   if (["kids", "teens", "adults"].includes(o.mode)) k.mode = o.mode;

@@ -1,5 +1,5 @@
 /* Pure planning logic (no DOM, no store): date helpers, mushaf page weights and the review-cycle distribution.
-   Moved out of main.js unchanged so it can be unit-tested (see test/planner.test.js). */
+   Kept out of main.js so it can be unit-tested (see test/planner.test.js and test/algo2.test.js). */
 import {S} from "./surahs.js";
 import {PAGE_START} from "./pages.js";
 
@@ -55,9 +55,17 @@ export function planAdd(plan,n,f,t){
 }
 export const planHas=p=>!!p&&((p.surahs&&p.surahs.length>0)||(p.ranges&&p.ranges.length>0));
 export const planAyat=p=>planUnits(p).reduce((a,u)=>a+u[2]-u[1]+1,0);
+/* Plans saved before the in-order distribution carry no `algo` and keep the balanced, interleaved distribution below, exactly as it was.
+   Plans saved from now on carry algo:2 and use binsPages. */
+export const ALGO_PAGES=2;
 export function bins(plan){
-  const key=JSON.stringify([plan.surahs,plan.ranges||[],plan.cycle,plan.light,plan.weekStart]);
+  // the in-order distribution depends on the plan and its cycle only; the old one also on the light day and the week start
+  const key=JSON.stringify(plan.algo===ALGO_PAGES?[ALGO_PAGES,plan.surahs,plan.ranges||[],plan.cycle]:[0,plan.surahs,plan.ranges||[],plan.cycle,plan.light,plan.weekStart]);
   if(binCache.has(key))return binCache.get(key);
+  const out=plan.algo===ALGO_PAGES?binsPages(plan):binsLegacy(plan);
+  binCache.set(key,out);return out;
+}
+function binsLegacy(plan){
   const ws=plan.weekStart==null?6:plan.weekStart,N=7*plan.cycle,caps=[];
   for(let b=0;b<N;b++){const jd=(ws+b%7)%7;caps.push(jd===plan.light?0.5:1)}
   const list=planUnits(plan),total=list.reduce((a,u)=>a+pgs(u[0],u[1],u[2]),0),unit=total/caps.reduce((a,c)=>a+c,0);
@@ -90,13 +98,95 @@ export function bins(plan){
     const rng=chunks.filter(c=>c[0]===n).map(c=>[c[1],c[2]]).sort((x,y)=>x[0]-y[0]);parts.forEach((c,j)=>{c[1]=rng[j][0];c[2]=rng[j][1]})});
   out.length=0;res.forEach(a=>out.push(a));
   out.forEach(a=>a.sort((x,y)=>x[0]-y[0]||x[1]-y[1]));
-  binCache.set(key,out);return out;
+  return out;
+}
+
+/* In mushaf order and equal in PAGES. The ayat of the plan are laid end to end, each weighing its share of a mushaf page, and every day
+   takes an equal stretch: there is no light day in this distribution. The end of each day is the ayah that brings the total
+   closest to the exact equal share, wherever it falls (a surah or a page is not a reason to move it). So 7 pages over 7 days is one
+   page a day, 20 pages over 7 days is about 2.9 a day, neighbouring surahs share a day, and the days differ by less than one ayah.
+   When the plan is smaller than the number of days some days stay empty, spread through the cycle. */
+function binsPages(plan){
+  const N=7*plan.cycle,caps=[];
+  for(let b=0;b<N;b++)caps.push(1)
+  const units=planUnits(plan),ay=[];
+  units.forEach(([n,lo,hi])=>{for(let a=lo;a<=hi;a++){const g=AY0[n-1]+a;ay.push({n,a,w:AW[g]})}});
+  const out=[];for(let b=0;b<N;b++)out.push([]);
+  if(!ay.length)return out;
+  const cum=[0];ay.forEach(x=>cum.push(cum[cum.length-1]+x.w));
+  const total=cum[ay.length],capSum=caps.reduce((x,y)=>x+y,0),cands=[];
+  for(let i=1;i<=ay.length;i++)cands.push(i);
+  const cuts=[];let c0=0,prev=0;
+  for(let b=0;b<N-1;b++){
+    c0+=caps[b];const target=c0/capSum*total;let best=prev,bc=Infinity;
+    for(const i of cands){if(i<prev)continue;const cost=Math.abs(cum[i]-target);if(cost<bc-1e-9){bc=cost;best=i}}
+    // staying on the previous cut (an empty day) is chosen when it is clearly closer to the target than any real boundary
+    if(Math.abs(cum[prev]-target)<Math.abs(cum[best]-target)-1e-9)best=prev;
+    cuts.push(best);prev=best;
+  }
+  let from=0;
+  [...cuts,ay.length].forEach((to,b)=>{
+    const items=[];for(let i=from;i<to;i++){const x=ay[i],l=items[items.length-1];if(l&&l[0]===x.n&&l[2]===x.a-1)l[2]=x.a;else items.push([x.n,x.a,x.a])}
+    out[b]=items;from=Math.max(from,to);
+  });
+  return out;
+}
+
+/* Did the plan itself change (surahs, ranges or cycle length)? Order inside the lists does not matter. */
+const planKey=q=>JSON.stringify([(q.surahs||[]).slice().sort((x,y)=>x-y),(q.ranges||[]).map(r=>r.slice()).sort((x,y)=>x[0]-y[0]||x[1]-y[1]),q.cycle]);
+export const planChanged=(prev,next)=>!prev||planKey(prev)!==planKey(next);
+/* The fields that say how a plan is distributed, for the plan being saved. A new plan, or one whose surahs/ranges/cycle changed,
+   gets the in-order distribution (algo 2, no light day) counted from today. A plan saved with nothing changed keeps exactly what it had
+   (an old plan stays old; its start is not touched). Never returns an undefined value: Firestore rejects those.
+   keepStart is for adding to a plan little by little (the "add to my review" prompt): a plan that already has the in-order distribution and
+   keeps its cycle length keeps its start too, so the cycle goes on instead of going back to day 1 with every addition. */
+export function planStamp(prev,next,today,weekToday,keepStart){
+  if(keepStart&&prev&&prev.algo===ALGO_PAGES&&prev.start&&prev.cycle===next.cycle)return{light:-1,algo:ALGO_PAGES,start:prev.start};
+  if(planChanged(prev,next))return{light:-1,algo:ALGO_PAGES,start:today};
+  const out={light:prev.algo===ALGO_PAGES||prev.light==null?-1:prev.light,start:prev.start||(prev.algo===ALGO_PAGES?today:weekToday)};
+  if(prev.algo===ALGO_PAGES)out.algo=ALGO_PAGES;
+  return out;
+}
+
+/* A plan saved from a device whose date was ahead (or from a timezone ahead of ours) has a start that has not come yet here. Such a plan
+   is counted from today until the real start arrives, so nobody sees an empty day because of a date difference. Plans without the
+   in-order distribution, and starts that are not a valid date, are returned untouched (same object). Does not modify the stored plan. */
+export const START_RE=/^\d{4}-\d{2}-\d{2}$/;
+export function clampStart(p,today){
+  if(p&&p.algo===ALGO_PAGES&&typeof p.start==="string"&&START_RE.test(p.start)&&START_RE.test(today)&&p.start>today)return Object.assign({},p,{start:today});
+  return p;
+}
+
+/* The days of the week starting on w that the weekly gift asks for. All seven, except for a plan with the in-order distribution that
+   starts inside or after the week: the days before its start have no wird, so they are not asked for (a plan saved on Wednesday opens
+   its first gift on the days from Wednesday to the end of that week). A week wholly before the start has none, so no gift. */
+export function giftDays(plan,w){
+  const out=[];for(let i=0;i<7;i++)out.push(addDays(w,i));
+  if(plan&&plan.algo===ALGO_PAGES&&typeof plan.start==="string"&&START_RE.test(plan.start))return out.filter(d=>d>=plan.start);
+  return out;
+}
+
+/* The numbers of the week starting on w. starsOf(date) is the stars written for that date (0 when nothing).
+   tot: stars of the seven days. rated: every day with a star, whatever the plan (what the reports and the teen badges count).
+   need: days the gift asks for (giftDays). done: rated days among them. open: the gift is open. left: days still needed. */
+export function giftStats(plan,w,starsOf){
+  const need=giftDays(plan,w);let tot=0,rated=0,done=0;
+  for(let i=0;i<7;i++){const d=addDays(w,i),s=+starsOf(d)||0;tot+=s;if(s>0){rated++;if(need.indexOf(d)>-1)done++}}
+  return{tot,rated,done,need:need.length,open:need.length>0&&done>=need.length,left:Math.max(0,need.length-done)}
 }
 
 /* The items of a plan on a date (before any per-day override stored by the app). */
 export function planItems(p,date){
   if(!planHas(p))return[];
   const ws=p.weekStart==null?6:p.weekStart;
+  if(p.algo===ALGO_PAGES){
+    // counted from the day the plan was saved; before that day there is no wird. A missing or malformed start, or a cycle that is not
+    // a whole number of weeks, gives an empty day: such a plan cannot be placed in time, and it must not crash the screen.
+    if(!Number.isInteger(p.cycle)||p.cycle<1)return[];
+    if(typeof p.start!=="string"||!START_RE.test(p.start)||date<p.start)return[];
+    const n=7*p.cycle,di=((diffDays(p.start,date)%n)+n)%n;
+    return(bins(p)[di]||[]).map(c=>[c[0],c[1],c[2]])
+  }
   const wk=Math.round(diffDays(p.start||weekOfWs(date,ws),weekOfWs(date,ws))/7),wi=((wk%p.cycle)+p.cycle)%p.cycle;
   const off=(parse(date).getDay()-ws+7)%7;
   return bins(p)[wi*7+off].map(c=>[c[0],c[1],c[2]]);

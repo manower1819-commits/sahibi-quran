@@ -1,5 +1,5 @@
 import {S} from "./surahs.js";
-import {pad,iso,parse,addDays,diffDays,weekOfWs,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,pageSegments,itemPageList,itemAyat,itemPages} from "./planner.js";
+import {pad,iso,parse,addDays,diffDays,weekOfWs,planStamp,clampStart,giftStats,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,pageSegments,itemPageList,itemAyat,itemPages} from "./planner.js";
 import {I,DAYS,DSHORT} from "./i18n.js";
 import {STAR,LOGO,THEMES,THEME_ORDER,giftSvg,ICON_GEAR,ICON_BACK} from "./themes.js";
 import {createFakeBackend} from "./backend-fake.js";
@@ -52,7 +52,7 @@ const planSurahCount=p=>new Set(planUnits(p).map(u=>u[0])).size;
 function day(kid,date){return ((ST.days[kid.id]||{})[date])||null}
 function planFor(kid,date){
   const r=day(kid,date);if(r&&r.items)return r.items;
-  return planItems(effPlan(kid),date);
+  return planItems(clampStart(effPlan(kid),today()),date);
 }
 function setField(kid,date,f){quietUntil=Date.now()+900;const r=day(kid,date);if(!r||!r.items)f=Object.assign({items:planFor(kid,date)},f);D.setDay(kid.id,date,f)}
 const amt=items=>{const pg=Math.round(itemPages(items)*10)/10;return itemAyat(items)+' '+t("ayah")+' · '+pg+' '+(L()==="en"&&pg===1?"page":t("page_u"))};
@@ -203,7 +203,8 @@ function renderWelcome(){
 const demoNote=()=>D.kind==="demo"?'<p class="status">'+t("demo_note")+'</p>':'';
 
 /* ================= child: main week ================= */
-function weekStats(k,w){let tot=0,done=0;for(let i=0;i<7;i++){const r=day(k,addDays(w,i)),s=r?+(r.stars||0):0;tot+=s;if(s>0)done++}return{tot,done}}
+/* see giftStats in planner.js: tot, rated (all rated days), need, done, open, left */
+function weekStats(k,w){return giftStats(clampStart(effPlan(k),today()),w,d=>{const r=day(k,d);return r?+(r.stars||0):0})}
 function renderMain(k){
   applyTheme(k.theme);
   const w=weekView||weekOf(today()),isCur=w===weekOf(today()),T=THEMES[k.theme]||THEMES.space,h=halaqaOf(k);
@@ -223,13 +224,13 @@ function renderMain(k){
 function renderPath(k,w){
   const T=THEMES[k.theme]||THEMES.space;let last=-1,html="";
   for(let i=0;i<7;i++){const date=addDays(w,i),r=day(k,date),d=!!(r&&+(r.stars||0)>0);if(d)last=i;html+='<div class="st'+(d?" done":"")+'" id="st-'+i+'">'+T.st(i,d)+'<small>'+DSHORT[L()][parse(date).getDay()]+'</small></div>'}
-  const s=weekStats(k,w),open=s.done===7;
+  const s=weekStats(k,w),open=s.open;
   $("path").innerHTML=html+'<div class="st gift'+(open?" open":"")+'">'+giftSvg(open)+'<small>'+t("gift")+'</small></div>';
   if(last>=0)$("st-"+last).insertAdjacentHTML("afterbegin",'<span class="mini">'+T.art+'</span>');
   $("starCount").textContent=s.tot;
-  const g=$("giftNote"),left=7-s.done;
+  const g=$("giftNote"),left=s.left;
   if(open){g.className="gift-note win";g.textContent=t(k.gender==="f"?"win_f":"win_m",k.name)}
-  else{g.className="gift-note";g.textContent=left===1?t("left1"):left===2?t("left2"):t("leftN",left)}
+  else{g.className="gift-note";g.textContent=s.need===0?"":left===1?t("left1"):left===2?t("left2"):t("leftN",left)}
 }
 const HINT=["h0","h1","h2","h3"];
 function surahOptions(sel){let o='<option value="">—</option>';for(let n=1;n<=114;n++)o+='<option value="'+n+'"'+(n===sel?' selected':'')+'>'+n+'. '+esc(sName(n))+'</option>';return o}
@@ -244,7 +245,7 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   const weakKey=teacherMode?"tWeak":"weak",weak=r[weakKey]||[],p=effPlan(k),A=variant==="adults"?analyse(k):null;
   const el=document.createElement("article");el.className="card day v-"+variant+(isToday&&variant==="week"?" today":"");el.id="day-"+date;
   const head=variant==="kids"?'<div class="day-h"><h2>'+(isToday?t("mission"):DAYS[L()][jd])+'</h2><span class="d">'+(items.length?amt(items):'')+'</span></div>'
-    :'<div class="day-h"><h2>'+(variant==="week"?DAYS[L()][jd]:t("review_of",DAYS[L()][jd]))+(isToday&&variant==="week"?'<span class="chip today">'+t("today")+'</span>':'')+(jd===p.light?'<span class="chip">'+t("lightchip")+'</span>':'')+'</h2><span class="d">'+(variant==="week"?niceH(date):(items.length?amt(items):''))+'</span></div>';
+    :'<div class="day-h"><h2>'+(variant==="week"?DAYS[L()][jd]:t("review_of",DAYS[L()][jd]))+(isToday&&variant==="week"?'<span class="chip today">'+t("today")+'</span>':'')+(jd===p.light&&p.algo!==2?'<span class="chip">'+t("lightchip")+'</span>':'')+'</h2><span class="d">'+(variant==="week"?niceH(date):(items.length?amt(items):''))+'</span></div>';
   let list;
   if(!items.length)list='<p class="empty">'+t("no_review")+'</p>';
   else if(variant==="adults")list='<div class="rows">'+items.map(it=>{const lv=A.lv[it[0]],str=lv&&lv.n?t("strength")+' '+lv.avg.toFixed(1):t("nolv");return '<button class="item row'+(weak.indexOf(it[0])>-1?' weak':'')+'" data-s="'+it[0]+'" aria-pressed="'+(weak.indexOf(it[0])>-1)+'"><span class="q">'+itemLabel(it)+'</span><span class="m">'+(it[2]-it[1]+1)+' '+t("ayah")+' · '+str+'</span></button>'}).join("")+'</div><span class="hint">'+t("tap_weak_self")+'</span>';
@@ -285,7 +286,7 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
     askBox.hidden=false;
     askBox.innerHTML='<span>'+t("addrev_q",esc(sName(n)),f,to)+'</span><span class="row"><button type="button" class="btn small primary" data-y>'+t("addrev_yes")+'</button><button type="button" class="btn small" data-n>'+t("addrev_no")+'</button></span>';
     askBox.querySelector("[data-y]").onclick=async()=>{quietUntil=Date.now()+900;justAdded=key;const np=planAdd(kk,n,f,to);
-      try{await D.saveKid(Object.assign({},kk,{surahs:np.surahs,ranges:np.ranges,start:weekOf(today())}))}catch(e){justAdded="";askBox.innerHTML='<span class="msg err">'+t("err_generic")+'</span>';return}
+      try{await D.saveKid(Object.assign({},kk,{surahs:np.surahs,ranges:np.ranges},planStamp(kk,{surahs:np.surahs,ranges:np.ranges,cycle:kk.cycle},today(),weekOf(today()),true)))}catch(e){justAdded="";askBox.innerHTML='<span class="msg err">'+t("err_generic")+'</span>';return}
       askAdd()};
     askBox.querySelector("[data-n]").onclick=()=>{prefs.noAdd=prefs.noAdd||{};prefs.noAdd[key]=1;savePrefs();askBox.hidden=true};
   }
@@ -428,7 +429,7 @@ function kidsScene(k,w,sel){
   let st='',last=-1;
   for(let i=0;i<7;i++){const d=addDays(w,i),r=day(k,d),done=!!(r&&+(r.stars||0)>0);if(done)last=i;const [x,y]=PATHPTS[i];
     st+='<g class="pstation'+(d===sel?" sel":"")+'" data-d="'+d+'" role="button" tabindex="0" aria-label="'+DAYS[L()][parse(d).getDay()]+'">'+(d===sel?'<circle cx="'+x+'" cy="'+y+'" r="24" fill="none" stroke="'+(dark?"#ffffff":T.c.accent2)+'" stroke-width="3" stroke-dasharray="4 4"/>':'')+'<svg x="'+(x-20)+'" y="'+(y-20)+'" width="40" height="40" viewBox="0 0 40 40">'+T.st(i,done).replace(/^<svg[^>]*>/,'').replace(/<\/svg>$/,'')+'</svg><text x="'+x+'" y="'+(y+34)+'" text-anchor="middle" font-size="11" font-weight="700" fill="'+ink+'" opacity=".85">'+DSHORT[L()][parse(d).getDay()]+'</text></g>'}
-  const s=weekStats(k,w),open=s.done===7,me=PATHPTS[Math.max(0,last)];
+  const s=weekStats(k,w),open=s.open,me=PATHPTS[Math.max(0,last)];
   const gift='<g transform="translate('+(GIFTPT[0]-20)+' '+(GIFTPT[1]-20)+')" class="gift'+(open?" open":"")+'">'+giftSvg(open).replace(/^<svg[^>]*>/,'').replace(/<\/svg>$/,'')+'</g>';
   const av='<g transform="translate('+(me[0]-22)+' '+(me[1]-62)+')"><circle cx="22" cy="22" r="23" fill="#ffffff" stroke="'+T.c.accent+'" stroke-width="3"/><svg x="2" y="2" width="40" height="40" viewBox="0 0 150 120">'+avatar(k.look||0,k.skin==null?1:k.skin,{head:true}).replace(/^<svg[^>]*>/,'').replace(/<\/svg>$/,'')+'</svg></g>';
   const stars=dark?'<g fill="#ffffff" opacity=".8"><circle cx="40" cy="40" r="1.6"/><circle cx="120" cy="24" r="1.2"/><circle cx="250" cy="34" r="1.8"/><circle cx="350" cy="70" r="1.3"/><circle cx="30" cy="160" r="1.2"/><circle cx="370" cy="200" r="1.6"/><circle cx="200" cy="110" r="1"/></g>':'';
@@ -445,7 +446,7 @@ function renderKids(k){
   app.innerHTML=slimTop(k)+
    '<div class="kidhead"><div class="kh-text"><span class="kh-hi">'+t("salam")+'</span><span class="kh-name">'+esc(k.name)+'</span><span class="kh-sub">'+sub+'</span></div><span class="starchip">'+ICONS.star+'<b>'+s.tot+'</b></span></div>'+
    '<div class="scenewrap" id="path">'+kidsScene(k,w,sel)+'</div>'+
-   '<p class="gift-note'+(s.done===7?" win":"")+'" id="giftNote">'+(s.done===7?t(k.gender==="f"?"win_f":"win_m",k.name):(7-s.done===1?t("left1"):7-s.done===2?t("left2"):t("leftN",7-s.done)))+giftTail(k)+'</p>'+
+   '<p class="gift-note'+(s.open?" win":"")+'" id="giftNote">'+(s.open?t(k.gender==="f"?"win_f":"win_m",k.name):(s.need===0?"":s.left===1?t("left1"):s.left===2?t("left2"):t("leftN",s.left)))+(s.need?giftTail(k):'')+'</p>'+
    (h?'<p class="chipline">'+t("joined",esc(h.name))+'</p>':(ST.joins[k.id]||{}).status==="pending"?'<p class="chipline">'+t("join_pending",esc(ST.joins[k.id].name))+'</p>':'')+
    weekNav(w)+'<div id="days" class="days"></div>'+demoNote()+bottomNav("main");
   $("days").appendChild(makeDayCard(k,sel,PATHPTS.length,w,false,"kids"));
@@ -454,13 +455,13 @@ function renderKids(k){
 }
 function bindScene(k,w){app.querySelectorAll(".pstation").forEach(g=>{const f=()=>{selDay=g.dataset.d;render()};g.onclick=f;g.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();f()}}})}
 function maybeCelebrate(k,w){
-  const s=weekStats(k,w);if(s.done<7)return;const key="sahibi-cel-"+k.id+"-"+w;
+  const s=weekStats(k,w);if(!s.open)return;const key="sahibi-cel-"+k.id+"-"+w;
   try{if(localStorage.getItem(key))return;localStorage.setItem(key,"1")}catch(e){}
   let ayat=0;for(let i=0;i<7;i++){const d=addDays(w,i);ayat+=itemAyat(planFor(k,d))}
   const ov=document.createElement("div");ov.className="celebrate";ov.setAttribute("role","dialog");ov.setAttribute("aria-modal","true");
   ov.innerHTML='<div class="cel-in"><div class="confetti" aria-hidden="true">'+Array.from({length:18},(_,i)=>'<i style="--i:'+i+'"></i>').join("")+'</div><span class="cel-av">'+avatar(k.look||0,k.skin==null?1:k.skin,{happy:true})+'</span>'+giftSvg(true)+
    '<h2>'+t(k.gender==="f"?"cel_title_f":"cel_title_m",esc(k.name))+'</h2><p>'+t(k.gender==="f"?"cel_sub_f":"cel_sub_m")+'</p>'+(k.gift?'<p class="cel-gift">'+t("gift_is",esc(k.gift))+'</p>':'')+
-   '<div class="cel-stats"><span><b>'+s.tot+'</b>'+t("stars_lbl")+'</span><span><b>7/7</b>'+t("days_word")+'</span><span><b>'+ayat+'</b>'+t("ayah")+'</span></div><button class="btn accent big" id="celOk">'+t("open_gift")+'</button></div>';
+   '<div class="cel-stats"><span><b>'+s.tot+'</b>'+t("stars_lbl")+'</span><span><b>'+s.done+'/'+s.need+'</b>'+t("days_word")+'</span><span><b>'+ayat+'</b>'+t("ayah")+'</span></div><button class="btn accent big" id="celOk">'+t("open_gift")+'</button></div>';
   document.body.appendChild(ov);$("celOk").focus();$("celOk").onclick=()=>ov.remove();
 }
 
@@ -529,7 +530,7 @@ function analyse(k){
   const p=effPlan(k),start=k.start||p.start||weekOf(today()),curW=weekOf(today());
   const firstW=weekOf(dates[0]&&dates[0]<start?dates[0]:start),elapsed=Math.max(0,diffDays(firstW,today())+1);
   let best=0,run=0,prev=null;done.forEach(d=>{run=(prev&&addDays(prev,1)===d)?run+1:1;if(run>best)best=run;prev=d});
-  const perWeek=[];for(let w=firstW;w<=curW;w=addDays(w,7)){const s=weekStats(k,w);perWeek.push({w,stars:s.tot,days:s.done})}
+  const perWeek=[];for(let w=firstW;w<=curW;w=addDays(w,7)){const s=weekStats(k,w);perWeek.push({w,stars:s.tot,days:s.rated})}
   const pool={};planUnits(p).forEach(u=>pool[u[0]]=1);Object.keys(occ).forEach(n=>pool[n]=1);
   const lv={};Object.keys(pool).map(Number).sort((a,b)=>a-b).forEach(n=>{const o=(occ[n]||[]).slice().sort((a,b)=>a.d<b.d?-1:1);
     if(!o.length){lv[n]={level:"none",n:0};return}
@@ -645,8 +646,8 @@ function renderSEdit(k,h){
   $("eBack").onclick=leave;$("eCancel").onclick=leave;
   $("eSave").onclick=async()=>{if(!planHas(d._p)){$("eMsg").textContent=t("surah_req");return}
     $("eSave").disabled=true;
-    try{const prev=(h.studentPlans||{})[k.id],same=prev&&JSON.stringify([prev.surahs,prev.ranges||[],prev.cycle,prev.light])===JSON.stringify([d._p.surahs,d._p.ranges,d._p.cycle,d._p.light]);
-      const np={surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,light:d._p.light,weekStart:WS(),start:same&&prev.start?prev.start:weekOf(today())};
+    try{const prev=(h.studentPlans||{})[k.id];
+      const np={surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,...planStamp(prev,d._p,today(),weekOf(today())),weekStart:WS()};
       await D.saveHalaqa(Object.assign({},h,{studentPlans:Object.assign({},h.studentPlans||{},{[k.id]:np})}));leave()}
     catch(e){$("eSave").disabled=false;$("eMsg").textContent=t("err_generic")}};
 }
@@ -660,7 +661,7 @@ function renderStudent(k,h){
   $("sBack").onclick=()=>go("halaqa",{hid:h.id});
   $("toggleView").onclick=()=>go("shist",{hid:h.id,kid:k.id});
   $("spEdit").onclick=()=>{const sp=(h.studentPlans||{})[k.id],src=planHas(sp)?sp:planHas(h.plan)?h.plan:null;
-    draft={_p:src?{surahs:(src.surahs||[]).slice(),ranges:(src.ranges||[]).map(r=>r.slice()),cycle:src.cycle||1,light:src.light==null?5:src.light}:{surahs:[],ranges:[],cycle:1,light:5}};go("sedit",{hid:h.id,kid:k.id})};
+    draft={_p:src?{surahs:(src.surahs||[]).slice(),ranges:(src.ranges||[]).map(r=>r.slice()),cycle:src.cycle||1}:{surahs:[],ranges:[],cycle:1}};go("sedit",{hid:h.id,kid:k.id})};
   if($("spOff")){let armed=false;$("spOff").onclick=async()=>{if(!armed){armed=true;$("spOff").className="btn warn";$("spOff").textContent=t("del2");return}
     await D.saveHalaqa(Object.assign({},h,{studentPlans:Object.assign({},h.studentPlans||{},{[k.id]:null})}));render()}}
   $("wPrev").onclick=()=>{weekView=addDays(w,-7);render()};$("wNext").onclick=()=>{weekView=addDays(w,7);render()};
@@ -781,20 +782,20 @@ function planSection(d){
    '<label class="field"><input id="eSearch" type="search" placeholder="'+t("search")+'" autocomplete="off"></label><span class="hint" id="eCount"></span><div class="picker" id="ePick">'+
    range(1,114).map(n=>'<label class="pk" data-q="'+esc(S[n-1][0]+" "+S[n-1][1].toLowerCase()+" "+n)+'"><input type="checkbox" value="'+n+'"'+(d.surahs.indexOf(n)>-1?' checked':'')+'><span class="n">'+n+'</span><span class="q">'+esc(sName(n))+'</span><span class="a">'+S[n-1][2]+' '+t("ayah")+'</span></label>').join("")+'</div></section>'+
    '<section class="card"><h3>'+t("ayat_pick")+'</h3><p class="about">'+t("ayat_pick_t")+'</p><div class="newrow rangerow"><select class="sel" id="rS" aria-label="'+t("new_surah")+'">'+surahOptions(0)+'</select><input id="rF" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input id="rT" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div><div class="row"><button type="button" class="btn" id="rAdd">'+t("ayat_add")+'</button></div><p class="msg err" id="rMsg"></p><div id="rList"></div></section>'+
-   '<section class="card"><h3>'+t("cycle")+'</h3>'+seg("eCycle",[1,2,3,4,6,8,12].map(c=>[c,cycleLbl(c)]),d.cycle)+'<h3>'+t("light")+'</h3>'+seg("eLight",[[-1,t("none")]].concat(range(0,6).map(i=>[(WS()+i)%7,DAYS[L()][(WS()+i)%7]])),d.light)+'<div class="estimate" id="eEst"></div></section>';
+   '<section class="card"><h3>'+t("cycle")+'</h3>'+seg("eCycle",[1,2,3,4,6,8,12].map(c=>[c,cycleLbl(c)]),d.cycle)+'<div class="estimate" id="eEst"></div></section>';
 }
 function bindPlan(d){
   if(!d.ranges)d.ranges=[];
   const drawRanges=()=>{d.ranges.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);$("rList").innerHTML=d.ranges.map((r,ix)=>'<div class="kidrow"><span class="t"><b>'+esc(sName(r[0]))+'</b><small>'+t("ayat_range",r[1],r[2])+'</small></span><button type="button" class="btn" data-rm="'+ix+'">'+t("ayat_rm")+'</button></div>').join("");
     $("rList").querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{d.ranges.splice(+b.dataset.rm,1);drawRanges();upd()})};
-  const upd=()=>{$("eCount").textContent=t("selected",planSurahCount(d));const tot=planAyat(d),caps=7*d.cycle-(d.light>=0?0.5*d.cycle:0);$("eEst").innerHTML=planHas(d)?t("est",Math.round(tot/caps),cycleLbl(d.cycle)):t("est0")};upd();drawRanges();
+  const upd=()=>{$("eCount").textContent=t("selected",planSurahCount(d));const tot=planAyat(d),caps=7*d.cycle;$("eEst").innerHTML=planHas(d)?t("est",Math.round(tot/caps),cycleLbl(d.cycle)):t("est0")};upd();drawRanges();
   $("rS").onchange=e=>{const n=+e.target.value;$("rF").max=$("rT").max=n?S[n-1][2]:"";$("rMsg").textContent=""};
   $("rAdd").onclick=()=>{const n=+$("rS").value,f=Math.round(+$("rF").value),to=Math.round(+$("rT").value),msg=$("rMsg");msg.textContent="";
     if(!n||!(f>=1)||!(to>=f)||to>S[n-1][2]){msg.textContent=t("ayat_bad",n?S[n-1][2]:286);return}
     if(d.surahs.indexOf(n)>-1){msg.textContent=t("ayat_whole");return}
     d.ranges=d.ranges.filter(r=>r[0]!==n);d.ranges.push([n,f,to]);$("rF").value=$("rT").value="";drawRanges();upd()};
   const segB=(id,f)=>$(id).querySelectorAll("button").forEach(b=>b.onclick=()=>{d[f]=+b.dataset.v;$(id).querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));upd()});
-  segB("eCycle","cycle");segB("eLight","light");
+  segB("eCycle","cycle");
   const sync=()=>{$("ePick").querySelectorAll("input").forEach(c=>c.checked=d.surahs.indexOf(+c.value)>-1);drawRanges();upd()};
   $("ePick").addEventListener("change",e=>{const n=+e.target.value;if(e.target.checked){if(d.surahs.indexOf(n)<0)d.surahs.push(n);d.ranges=d.ranges.filter(r=>r[0]!==n);drawRanges()}else d.surahs=d.surahs.filter(x=>x!==n);upd()});
   app.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{const p=b.dataset.p,add=p==="p30"?range(78,114):p==="p29"?range(67,77):p==="p2930"?range(67,114):p==="pall"?range(1,114):null;if(!add){d.surahs=[];d.ranges=[]}else add.forEach(n=>{if(d.surahs.indexOf(n)<0)d.surahs.push(n);d.ranges=d.ranges.filter(r=>r[0]!==n)});d.surahs.sort((a,b)=>a-b);sync()});
@@ -804,7 +805,7 @@ function bindPlan(d){
 /* ================= kid editor ================= */
 function openEdit(id,self){
   const k=id?ST.kids[id]:null;
-  draft=k?JSON.parse(JSON.stringify(k)):Object.assign({id:uid("k"),name:"",gender:"m",theme:"space",surahs:[],cycle:1,light:5,halaqaId:null,teacherUid:null,age:"",mode:null,self:false,look:0,skin:1,_new:true},self?{name:ST.profile.name||"",age:30,self:true}:{});
+  draft=k?JSON.parse(JSON.stringify(k)):Object.assign({id:uid("k"),name:"",gender:"m",theme:"space",surahs:[],cycle:1,halaqaId:null,teacherUid:null,age:"",mode:null,self:false,look:0,skin:1,_new:true},self?{name:ST.profile.name||"",age:30,self:true}:{});
   if(!draft.surahs)draft.surahs=[];if(!draft.ranges)draft.ranges=[];go("edit");
 }
 function renderEdit(){
@@ -873,9 +874,9 @@ async function saveDraft(quiet){
   if(!d.name){$("eMsg").textContent=t("name_req");return false}
   if(!tp&&!planHas(d)&&!quiet){$("eMsg").textContent=t("surah_req");return false}
   const prev=ST.kids[d.id];
-  const changed=!prev||JSON.stringify([prev.surahs,prev.ranges||[],prev.cycle,prev.light])!==JSON.stringify([d.surahs,d.ranges||[],d.cycle,d.light]);
-  const k={id:d.id,name:d.name,gender:d.gender,theme:d.theme,palette:d.palette||null,age:d.age===""?null:d.age,mode:d.mode||null,self:!!d.self,look:d.look||0,skin:d.skin==null?1:d.skin,gift:(d.gift||"").trim().slice(0,60),surahs:d.surahs.slice().sort((a,b)=>a-b),ranges:(d.ranges||[]).map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d.cycle,light:d.light,weekStart:WS(),
-    start:changed?weekOf(today()):(prev.start||weekOf(today())),created:prev&&prev.created||Date.now(),halaqaId:prev?prev.halaqaId||null:null,teacherUid:prev?prev.teacherUid||null:null};
+  const st=planStamp(prev,d,today(),weekOf(today()));
+  const k={id:d.id,name:d.name,gender:d.gender,theme:d.theme,palette:d.palette||null,age:d.age===""?null:d.age,mode:d.mode||null,self:!!d.self,look:d.look||0,skin:d.skin==null?1:d.skin,gift:(d.gift||"").trim().slice(0,60),surahs:d.surahs.slice().sort((a,b)=>a-b),ranges:(d.ranges||[]).map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d.cycle,...st,weekStart:WS(),
+    created:prev&&prev.created||Date.now(),halaqaId:prev?prev.halaqaId||null:null,teacherUid:prev?prev.teacherUid||null:null};
   await D.saveKid(k);d._new=false;return true;
 }
 
@@ -885,7 +886,7 @@ function openHEdit(id){
   const h=id?ST.halaqas[id]:null;
   draft=h?JSON.parse(JSON.stringify(h)):{id:"h"+Array.from(crypto.getRandomValues(new Uint8Array(12)),x=>x.toString(36).padStart(2,"0")).join(""),name:"",teacherName:ST.profile.name||"",plan:null,_new:true};
   draft._usePlan=planHas(draft.plan);
-  draft._p=draft.plan?JSON.parse(JSON.stringify(draft.plan)):{surahs:[],ranges:[],cycle:1,light:5};
+  draft._p=draft.plan?JSON.parse(JSON.stringify(draft.plan)):{surahs:[],ranges:[],cycle:1};
   if(!draft._p.ranges)draft._p.ranges=[];
   go("hedit");
 }
@@ -905,7 +906,7 @@ function renderHEdit(){
     if(d._usePlan&&!planHas(d._p)){$("eMsg").textContent=t("surah_req");return}
     $("eSave").disabled=true;
     try{let code=d.code;if(!code){for(let i=0;i<5;i++){code=newCode();if(!(await D.codeTaken(code)))break}}
-      const prev=d.plan,np=d._usePlan?{surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,light:d._p.light,weekStart:WS(),start:prev&&JSON.stringify([prev.surahs,prev.ranges||[],prev.cycle,prev.light])===JSON.stringify([d._p.surahs,d._p.ranges,d._p.cycle,d._p.light])?prev.start:weekOf(today())}:null;
+      const prev=d.plan,np=d._usePlan?{surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,...planStamp(prev,d._p,today(),weekOf(today())),weekStart:WS()}:null;
       await D.saveHalaqa({id:d.id,name:d.name,teacherName:(d.teacherName||"").trim(),code,plan:np,created:d.created||Date.now()});
       if(!ST.profile.name&&d.teacherName)D.saveProfile({name:d.teacherName.trim()});
       prefs.mode="teach";savePrefs();const id=d.id;draft=null;hDate=null;go("halaqa",{hid:id});
