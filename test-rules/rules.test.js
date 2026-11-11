@@ -6,7 +6,7 @@ import {readFileSync} from "node:fs";
 import assert from "node:assert/strict";
 import {encode, decode} from "../src/codec.js";
 import {initializeTestEnvironment, assertSucceeds, assertFails} from "@firebase/rules-unit-testing";
-import {doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where, arrayUnion, arrayRemove, deleteField, serverTimestamp, Timestamp} from "firebase/firestore";
+import {doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc, collection, query, where, arrayUnion, arrayRemove, deleteField, serverTimestamp, Timestamp} from "firebase/firestore";
 
 let env;
 const A = "ownerA", B = "coB", S = "stranger", T = "teacherT", U = "teacherU";
@@ -445,4 +445,100 @@ test("requests: a request cannot be dated in the future (it would never expire)"
   await assertFails(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req({at: Date.now() + 40 * 864e5})), "40 days ahead");
   await assertFails(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req({at: Date.now() + 3600e3})), "an hour ahead is more than clock skew");
   await assertSucceeds(setDoc(doc(db(A), "halaqas/hT/requests/k1"), req({at: Date.now() + 60e3})), "a minute of clock skew is fine");
+});
+
+/* ---------- round 3: a co-parent removes only themself, the profile has the shapes the job reads, a class id needs a teacher ---------- */
+const C = "coC";
+async function threeParents() { await seed(d => updateDoc(doc(d, "kids/k1"), {parentUids: [A, B, C], parentNames: {coB: "Mama", coC: "Aunt"}})); }
+test("co-parent: leaves, but cannot remove the owner or another co-parent", async () => {
+  await threeParents();
+  const k = doc(db(B), "kids/k1");
+  await assertFails(updateDoc(k, {parentUids: arrayRemove(A)}), "the owner cannot be removed by a co-parent");
+  await assertFails(updateDoc(k, {parentUids: arrayRemove(C)}), "nor the other co-parent");
+  await assertFails(updateDoc(k, {parentUids: [B]}), "nor everyone else at once");
+  await assertSucceeds(updateDoc(k, {parentUids: arrayRemove(B), "parentNames.coB": deleteField()}), "leaving is allowed");
+});
+test("co-parent: writes only their own display name", async () => {
+  await threeParents();
+  const k = doc(db(B), "kids/k1");
+  await assertFails(updateDoc(k, {"parentNames.coC": "hacked"}), "another co-parent's name");
+  await assertFails(updateDoc(k, {"parentNames.ownerA": "hacked"}), "the owner's name");
+  await assertFails(updateDoc(k, {parentNames: {coB: "Mama"}}), "replacing the whole map drops the other names");
+  await assertSucceeds(updateDoc(k, {"parentNames.coB": "Mom"}), "their own");
+});
+test("owner: still removes a co-parent and manages the names", async () => {
+  await threeParents();
+  const k = doc(db(A), "kids/k1");
+  await assertSucceeds(updateDoc(k, {parentUids: arrayRemove(C), "parentNames.coC": deleteField()}));
+  await assertSucceeds(updateDoc(k, {"parentNames.coB": "Mother"}));
+  await assertFails(updateDoc(k, {parentUids: arrayRemove(A)}), "the owner cannot drop themself from the list");
+});
+
+test("a class id with no teacher is not a link: neither on create nor on update", async () => {
+  await assertFails(updateDoc(doc(db(A), "kids/k1"), {halaqaId: "hT"}), "a parent cannot set a class without its teacher's approval");
+  await assertFails(updateDoc(doc(db(A), "kids/k1"), {halaqaId: "hT", teacherUid: null}));
+  await assertFails(setDoc(doc(db(A), "kids/k8"), {name: "N", parentUid: A, parentUids: [A], halaqaId: "hT"}), "nor a new child");
+  await assertSucceeds(setDoc(doc(db(A), "kids/k9"), {name: "N", parentUid: A, parentUids: [A]}), "a new child with no class");
+  await assertSucceeds(updateDoc(doc(db(A), "kids/k1"), {halaqaId: null, teacherUid: null}), "clearing is fine");
+});
+
+test("profile: the shapes the reminder job reads are checked, the rest of the profile is free", async () => {
+  const me = doc(db(A), "users/" + A);
+  await assertSucceeds(setDoc(me, {name: "N", lang: "ar", weekStart: 6, appTheme: "emerald", hijri: true, pin: {s: "ab", h: "cd"}, createdAt: Date.now(), imported: true}, {merge: true}));
+  await assertSucceeds(setDoc(me, {remindAt: "18:30", remindUtc: 930, offset: 180, summaryAt: "07:15", summaryUtc: 255}, {merge: true}), "what the app writes");
+  await assertSucceeds(setDoc(me, {remindAt: null, summaryAt: null}, {merge: true}), "switched off");
+  await assertSucceeds(updateDoc(me, {tokens: arrayUnion("tok1")}));
+  await assertSucceeds(setDoc(me, {lang: null, weekStart: 0, offset: -480}, {merge: true}));
+  for (const bad of [{offset: "x"}, {offset: 1e15}, {offset: 841}, {remindAt: "noon"}, {remindAt: 1830}, {summaryAt: "7:5"}, {lang: "constructor"}, {lang: 5},
+    {weekStart: 9}, {weekStart: "6"}, {tokens: "not-a-list"}, {tokens: Array.from({length: 51}, (_, i) => "t" + i)}])
+    await assertFails(setDoc(doc(db(S), "users/" + S), bad, {merge: true}), JSON.stringify(bad));
+  await assertSucceeds(setDoc(doc(db(S), "users/" + S), {tokens: Array.from({length: 50}, (_, i) => "t" + i)}, {merge: true}), "fifty devices are allowed");
+  await assertFails(setDoc(doc(db(U), "users/" + U), {tokens: Array.from({length: 51}, (_, i) => "t" + i)}, {merge: true}), "fifty-one are not");
+});
+test("profile: only the owner reads, and the owner can delete the document", async () => {
+  await seed(d => setDoc(doc(d, "users/" + A), {name: "N"}));
+  await assertFails(getDoc(doc(db(S), "users/" + A)));
+  await assertSucceeds(getDoc(doc(db(A), "users/" + A)));
+  await assertFails(deleteDoc(doc(db(S), "users/" + A)));
+  await assertSucceeds(deleteDoc(doc(db(A), "users/" + A)), "deleting the account removes it");
+});
+
+test("queue: a teacher's tap needs a string child id, a numeric time and a language the job knows", async () => {
+  await seed(d => updateDoc(doc(d, "kids/k1"), {teacherUid: T, halaqaId: "hT"}));
+  const tap = o => Object.assign({kidId: "k1", teacherUid: T, lang: "ar", at: Date.now()}, o);
+  await assertSucceeds(addDoc(collection(db(T), "reminders"), tap()));
+  await assertSucceeds(addDoc(collection(db(T), "reminders"), tap({lang: "en", kind: "note"})));
+  for (const bad of [{lang: "constructor"}, {lang: 5}, {lang: "fr"}, {at: "now"}, {at: null}, {kidId: 5}, {kind: "other"}])
+    await assertFails(addDoc(collection(db(T), "reminders"), tap(bad)), JSON.stringify(bad));
+});
+
+test("profile: an old document with odd values still saves other things, and a too long device list can be trimmed", async () => {
+  await seed(d => setDoc(doc(d, "users/" + A), {name: "N", offset: "x", lang: "constructor", tokens: Array.from({length: 60}, (_, i) => "t" + i)}));
+  const me = doc(db(A), "users/" + A);
+  await assertSucceeds(setDoc(me, {weekStart: 0}, {merge: true}), "a field the write does not touch is not judged");
+  await assertSucceeds(setDoc(me, {appTheme: "night", hijri: true}, {merge: true}));
+  await assertFails(setDoc(me, {offset: "y"}, {merge: true}), "but a value the write sets must be good");
+  await assertSucceeds(setDoc(me, {offset: 180}, {merge: true}), "and fixing the odd one is allowed");
+  await assertFails(updateDoc(me, {tokens: arrayUnion("new-device")}), "a list over fifty cannot grow");
+  await assertSucceeds(updateDoc(me, {tokens: arrayRemove("t0")}), "but it can shrink, a device at a time");
+  await assertSucceeds(updateDoc(me, {lang: "en"}));
+});
+test("profile: removing this device's token (sign out) works", async () => {
+  await seed(d => setDoc(doc(d, "users/" + A), {name: "N", tokens: ["a", "b"]}));
+  await assertSucceeds(updateDoc(doc(db(A), "users/" + A), {tokens: arrayRemove("a")}));
+});
+test("co-parent: the whole child record written back unchanged passes, and the display name is a string of at most 30 characters", async () => {
+  await seed(d => updateDoc(doc(d, "kids/k1"), {parentUids: [A, B], parentNames: {coB: "Mama"}}));
+  const k = doc(db(B), "kids/k1");
+  await assertSucceeds(setDoc(k, {name: "Sara 3", surahs: [112, 113], parentUid: A, parentUids: [A, B], parentNames: {coB: "Mama"}}, {merge: true}), "what saveKid writes from an up-to-date copy");
+  await assertFails(updateDoc(k, {"parentNames.coB": "x".repeat(31)}), "too long");
+  await assertFails(updateDoc(k, {"parentNames.coB": {a: 1}}), "not a string");
+  await assertSucceeds(updateDoc(k, {"parentNames.coB": "x".repeat(30)}), "thirty is fine");
+  await assertSucceeds(updateDoc(k, {tokens: arrayUnion("kid-device")}), "a device of the child");
+});
+test("teacher: letting a student go clears the class id too", async () => {
+  await seed(d => updateDoc(doc(d, "kids/k1"), {teacherUid: T, halaqaId: "hT"}));
+  await assertFails(updateDoc(doc(db(T), "kids/k1"), {teacherUid: null}), "the class id would stay behind");
+  await assertFails(updateDoc(doc(db(T), "kids/k1"), {teacherUid: null, halaqaId: "hU"}));
+  await assertSucceeds(updateDoc(doc(db(T), "kids/k1"), {teacherUid: null, halaqaId: null}));
 });
