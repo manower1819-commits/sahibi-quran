@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {makeBackup, parseBackup, cleanKid, cleanDay, BACKUP_APP, HOME_DAY_KEYS} from "../src/backup.js";
+import {makeBackup, parseBackup, cleanKid, cleanDay, BACKUP_APP, HOME_DAY_KEYS, MAX_TOTAL_DAYS} from "../src/backup.js";
 
 const KID = {id: "k1", name: "سارة", gender: "f", theme: "space", surahs: [112, 113], ranges: [[2, 255, 257]], cycle: 2, light: 5, weekStart: 6, start: "2026-11-07", created: 1700000000000,
   parentUid: "SECRET-UID", tokens: ["PUSH-TOKEN"], halaqaId: "h1", teacherUid: "t1", age: 7, look: 2, skin: 3};
@@ -85,4 +85,70 @@ test("a theme or palette name stored before this check cannot reach Object's own
   }
   for (const n of THEME_ORDER) assert.ok(THEMES[n] && THEMES[n].c, "theme " + n);
   for (const n of PALETTE_ORDER) assert.ok(PALETTES[n] && PALETTES[n].v, "palette " + n);
+});
+
+/* ---------- limits on what a file can make the app write or count ---------- */
+const file = kids => JSON.stringify({app: BACKUP_APP, version: 1, kids});
+const kidWith = (name, days) => ({name, surahs: [1], days});
+const dateAfter = n => { const d = new Date(Date.now() + n * 864e5); return d.toISOString().slice(0, 10); };
+
+test("import: records outside 2000-01-01 .. a year from now are dropped, so they cannot stretch the history back to the year 100", () => {
+  const days = {"0100-01-01": {stars: 1}, "1999-12-31": {stars: 1}, "2000-01-01": {stars: 2}, [dateAfter(300)]: {stars: 3}, [dateAfter(400)]: {stars: 1}, "9999-12-31": {stars: 1}, "2026-02-30": {stars: 1}};
+  const r = parseBackup(file([kidWith("س", days)]));
+  assert.deepEqual(Object.keys(r.kids[0].days).sort(), ["2000-01-01", dateAfter(300)].sort());
+  assert.equal(cleanKid({name: "س", start: "0100-01-01"}).start, undefined, "a plan start is bounded the same way");
+  assert.equal(cleanKid({name: "س", start: "2026-11-07"}).start, "2026-11-07");
+  const out = makeBackup([{id: "k", name: "س", surahs: [1]}], {k: {"0100-01-01": {stars: 1}, "2026-11-07": {stars: 2}}}, 0);
+  assert.deepEqual(Object.keys(out.kids[0].days), ["2026-11-07"], "export leaves such records out too");
+});
+
+test("import: lists are capped, and a list with nothing usable is left out instead of becoming an empty day", () => {
+  const many = Array.from({length: 500}, (_, i) => [1 + (i % 100), 1, 1]);
+  assert.ok(cleanKid({name: "س", ranges: many.map(r => [2, 1, 2])}).ranges.length <= 200);
+  assert.equal(cleanDay({stars: 1, items: many}).items.length, 200);
+  assert.deepEqual(cleanDay({stars: 1, items: []}).items, [], "an empty list stays empty (a day with no wird)");
+  assert.equal("items" in cleanDay({stars: 1, items: ["x", [999, 1, 1], null]}), false, "nothing usable: the day falls back to the plan");
+  assert.deepEqual(cleanDay({stars: 1, items: ["x", [112, 1, 4]]}).items, [[112, 1, 4]], "the usable part is kept");
+});
+
+test("import: more than 30 children keeps the first 30 and says how many were left out; it no longer refuses the file", () => {
+  const kids = Array.from({length: 35}, (_, i) => kidWith("طفل" + i, {}));
+  const r = parseBackup(file(kids));
+  assert.equal(r.ok, true); assert.equal(r.kids.length, 30); assert.equal(r.dropped, 5);
+});
+
+test("import: a child with more than 4000 records keeps the newest 4000 and reports the rest", () => {
+  const days = {};
+  for (let i = 0; i < 4100; i++) { const d = new Date(Date.UTC(2010, 0, 1) + i * 864e5).toISOString().slice(0, 10); days[d] = {stars: 1}; }
+  const r = parseBackup(file([kidWith("س", days)]));
+  const keys = Object.keys(r.kids[0].days).sort();
+  assert.equal(keys.length, 4000); assert.equal(r.droppedDays, 100);
+  assert.equal(keys[keys.length - 1], new Date(Date.UTC(2010, 0, 1) + 4099 * 864e5).toISOString().slice(0, 10), "the newest record is kept");
+  assert.equal(r.kids[0].days[new Date(Date.UTC(2010, 0, 1)).toISOString().slice(0, 10)], undefined, "the oldest is the one left out");
+});
+
+test("import: a file with more than 8000 records in all is refused as too big", () => {
+  const mk = () => { const days = {}; for (let i = 0; i < 3000; i++) days[new Date(Date.UTC(2010, 0, 1) + i * 864e5).toISOString().slice(0, 10)] = {stars: 1}; return days; };
+  const r = parseBackup(file([kidWith("أ", mk()), kidWith("ب", mk()), kidWith("ج", mk())]));
+  assert.deepEqual([r.ok, r.err], [false, "big"]);
+  assert.equal(parseBackup(file([kidWith("أ", mk()), kidWith("ب", mk())])).ok, true, "two such children are fine");
+});
+
+test("import: odd shapes of the days object are ignored", () => {
+  assert.deepEqual(parseBackup(file([{name: "س", surahs: [1], days: ["2026-11-07"]}])).kids[0].days, {});
+  const r = parseBackup('{"app":"sahibi-quran","version":1,"kids":[{"name":"س","surahs":[1],"days":{"__proto__":{"stars":3},"2026-11-07":{"stars":1}}}]}');
+  assert.deepEqual(Object.keys(r.kids[0].days), ["2026-11-07"]);
+  assert.equal(({}).stars, undefined, "nothing leaked onto Object.prototype");
+});
+
+test("export keeps the newest 4000 records of a child, so what is saved is what a restore will keep", () => {
+  const days = {};
+  for (let i = 0; i < 4100; i++) days[new Date(Date.UTC(2010, 0, 1) + i * 864e5).toISOString().slice(0, 10)] = {stars: 1};
+  const out = makeBackup([{id: "k", name: "س", surahs: [1]}], {k: days}, 0);
+  const keys = Object.keys(out.kids[0].days).sort();
+  assert.equal(keys.length, 4000);
+  assert.equal(keys[0], new Date(Date.UTC(2010, 0, 1) + 100 * 864e5).toISOString().slice(0, 10), "the oldest 100 are the ones left out");
+  const back = parseBackup(JSON.stringify(out));
+  assert.equal(back.ok, true); assert.equal(back.droppedDays, 0, "and the restore drops nothing more");
+  assert.equal(MAX_TOTAL_DAYS, 8000);
 });

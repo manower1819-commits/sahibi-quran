@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {validPin, hashPin, makePin, checkPin, failState, waitLeft, lockExpired, LOCK_MS} from "../src/pin.js";
+import {validPin, hashPin, makePin, checkPin, failState, parseFail, waitLeft, lockExpired, LOCK_MS} from "../src/pin.js";
 
 test("validPin: exactly four digits", () => {
   for (const ok of ["0000", "1234", "9999", 1234]) assert.equal(validPin(ok), true, String(ok));
@@ -35,4 +35,21 @@ test("auto-lock closes after five minutes without any activity", () => {
   assert.equal(lockExpired(0, 300000), false);
   assert.equal(lockExpired(0, 300001), true);
   assert.equal(lockExpired(1000, 1000 + 60000), false);
+});
+
+test("parseFail: a lockout kept in storage comes back as it was, and nothing odd survives", () => {
+  const now = 1_000_000;
+  assert.deepEqual(parseFail({n: 3, until: 0}, now), {n: 3, until: 0});
+  assert.deepEqual(parseFail({n: 0, until: now + 30000}, now), {n: 0, until: now + 30000}, "a wait still running");
+  // the state round-trips through JSON (that is how it is stored)
+  const s = failState(failState(null, now), now);
+  assert.deepEqual(parseFail(JSON.parse(JSON.stringify(s)), now), s);
+  // a wait is never longer than one lockout from now, whatever the stored value or the clock says
+  assert.equal(parseFail({n: 0, until: now + 99_999_999}, now).until, now + 60000);
+  for (const bad of [null, undefined, 5, "x", [], {}, {n: -1, until: 0}, {n: 1.5, until: 0}, {n: 5, until: 0}, {n: 99, until: 0}, {n: "a", until: 0}, {n: 1, until: -5}, {n: 1, until: NaN}, {n: 1, until: "z"}])
+    assert.equal(parseFail(bad, now), null, JSON.stringify(bad));
+  // restored state keeps counting: four stored failures plus one more start the wait
+  const r = failState(parseFail({n: 4, until: 0}, now), now);
+  assert.deepEqual(r, {n: 0, until: now + 60000});
+  assert.equal(waitLeft(r, now), 60);
 });

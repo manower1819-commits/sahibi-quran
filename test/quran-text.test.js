@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {createHash} from "node:crypto";
 import {S} from "../src/surahs.js";
-import {parseQuranText, quranTextComplete, splitBasmala} from "../src/quran-text.js";
+import {parseQuranText, quranTextComplete, splitBasmala, RECITERS, AYAH0, ayahUrl} from "../src/quran-text.js";
 
 const FILE = new URL("../public/quran-uthmani.txt", import.meta.url);
 const letters = s => [...s].filter(c => /[ء-ؿف-يٱ]/.test(c)).map(c => c.codePointAt(0).toString(16)).join(" ");
@@ -51,4 +51,25 @@ test("basmala is split off the first ayah of every surah except 1 and 9, and onl
   assert.equal(letters(splitBasmala(112, 1, m.get("112:1"), B).rest), "642 644 647 648 671 644 644 647 623 62d 62f", "112:1 is Qul huwa Allahu ahad");
   assert.equal(splitBasmala(27, 30, m.get("27:30"), B).basmala, null, "27:30 contains the basmala as part of the ayah: never split");
   assert.equal(splitBasmala(2, 2, m.get("2:2"), B).rest, m.get("2:2"));
+});
+
+/* ---------- the audio numbering: one file per ayah, numbered across the whole Quran ---------- */
+test("ayahUrl: the file number is the ayah's place in the whole Quran", () => {
+  const num = (s, a) => +ayahUrl("ar.husary", s, a).match(/\/(\d+)\.mp3$/)[1];
+  assert.equal(num(1, 1), 1);
+  assert.equal(num(1, 7), 7);
+  assert.equal(num(2, 1), 8);
+  assert.equal(num(2, 286), 293);
+  assert.equal(num(3, 1), 294);
+  assert.equal(num(112, 1), 6222);
+  assert.equal(num(114, 6), 6236);
+  // the last ayah of every surah is followed by the first of the next one, with no gap or overlap
+  for (let n = 1; n < 114; n++) assert.equal(num(n + 1, 1), num(n, S[n - 1][2]) + 1, "surah " + n);
+  assert.equal(AYAH0.length, 115); assert.equal(AYAH0[114], 6236);
+});
+
+test("ayahUrl: reciter and bitrate come from the list; an unknown reciter falls back to the first", () => {
+  for (const [id, kbps] of RECITERS.map(r => [r[0], r[1]])) assert.equal(ayahUrl(id, 1, 1), "https://cdn.islamic.network/quran/audio/" + kbps + "/" + id + "/1.mp3");
+  assert.equal(ayahUrl("ar.nobody", 1, 1), ayahUrl(RECITERS[0][0], 1, 1));
+  assert.equal(ayahUrl("constructor", 1, 1), ayahUrl(RECITERS[0][0], 1, 1), "a name that exists on every object is not a reciter");
 });
