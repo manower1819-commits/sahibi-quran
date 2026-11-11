@@ -97,6 +97,50 @@ test("requests: who can read, decide and delete", async () => {
   await assertFails(deleteDoc(doc(db(S), "halaqas/hT/requests/k1")));
   await assertSucceeds(deleteDoc(doc(db(A), "halaqas/hT/requests/k1")));
 });
+test("requests: a co-parent reads and cancels the owner's request, and the owner a co-parent's", async () => {
+  await seed(d => updateDoc(doc(d, "kids/k1"), {parentUids: [A, B], parentNames: {coB: "Mama"}}));
+  // made by the owner
+  await seed(d => setDoc(doc(d, "halaqas/hT/requests/k1"), req()));
+  await assertSucceeds(getDoc(doc(db(B), "halaqas/hT/requests/k1")), "co-parent reads the owner's request");
+  await assertFails(getDoc(doc(db(S), "halaqas/hT/requests/k1")), "a stranger still cannot");
+  await assertFails(deleteDoc(doc(db(S), "halaqas/hT/requests/k1")), "a stranger still cannot cancel");
+  await assertSucceeds(deleteDoc(doc(db(B), "halaqas/hT/requests/k1")), "co-parent cancels the owner's request");
+  // made by the co-parent
+  await assertSucceeds(setDoc(doc(db(B), "halaqas/hT/requests/k1"), req({parentUid: B})), "co-parent asks");
+  await assertSucceeds(getDoc(doc(db(A), "halaqas/hT/requests/k1")), "owner reads the co-parent's request");
+  await assertSucceeds(getDoc(doc(db(T), "halaqas/hT/requests/k1")), "the teacher still reads it");
+  await assertSucceeds(deleteDoc(doc(db(A), "halaqas/hT/requests/k1")), "owner cancels the co-parent's request");
+});
+test("requests: a co-parent who was removed no longer reads or cancels the owner's request", async () => {
+  await seed(d => updateDoc(doc(d, "kids/k1"), {parentUids: [A]}));
+  await seed(d => setDoc(doc(d, "halaqas/hT/requests/k1"), req()));
+  await assertFails(getDoc(doc(db(B), "halaqas/hT/requests/k1")));
+  await assertFails(deleteDoc(doc(db(B), "halaqas/hT/requests/k1")));
+  await assertSucceeds(getDoc(doc(db(A), "halaqas/hT/requests/k1")));
+});
+test("requests: the owner of one child cannot read or cancel a request for another child", async () => {
+  await seed(async d => {
+    await setDoc(doc(d, "kids/k9"), {name: "Other", parentUid: S, parentUids: [S]});
+    await setDoc(doc(d, "halaqas/hT/requests/k9"), req({kidId: "k9", parentUid: S, kidName: "Other"}));
+  });
+  await assertFails(getDoc(doc(db(A), "halaqas/hT/requests/k9")));
+  await assertFails(deleteDoc(doc(db(A), "halaqas/hT/requests/k9")));
+  await assertSucceeds(getDoc(doc(db(S), "halaqas/hT/requests/k9")));
+});
+test("requests: the teacher cancels; another teacher and a signed-out visitor cannot read or cancel", async () => {
+  await seed(async d => { await updateDoc(doc(d, "kids/k1"), {parentUids: [A, B], teacherUid: U, halaqaId: "hU"}); await setDoc(doc(d, "halaqas/hT/requests/k1"), req()); });
+  const out = env.unauthenticatedContext().firestore();
+  await assertFails(getDoc(doc(out, "halaqas/hT/requests/k1")));
+  await assertFails(deleteDoc(doc(out, "halaqas/hT/requests/k1")));
+  await assertFails(getDoc(doc(db(U), "halaqas/hT/requests/k1")), "the child's own teacher (another class) is not a parent");
+  await assertFails(deleteDoc(doc(db(U), "halaqas/hT/requests/k1")));
+  await assertSucceeds(deleteDoc(doc(db(T), "halaqas/hT/requests/k1")), "the class's teacher still can");
+});
+test("requests: a co-parent can also drop an approved request before the child is linked", async () => {
+  await seed(async d => { await updateDoc(doc(d, "kids/k1"), {parentUids: [A, B], parentNames: {coB: "Mama"}}); await setDoc(doc(d, "halaqas/hT/requests/k1"), approvedReq()); });
+  await assertSucceeds(getDoc(doc(db(B), "halaqas/hT/requests/k1")));
+  await assertSucceeds(deleteDoc(doc(db(B), "halaqas/hT/requests/k1")));
+});
 test("requests: the teacher can list pending ones, a stranger cannot", async () => {
   await seed(d => setDoc(doc(d, "halaqas/hT/requests/k1"), req()));
   await assertSucceeds(getDocs(query(collection(db(T), "halaqas/hT/requests"), where("status", "==", "pending"))));
