@@ -1,5 +1,5 @@
 import {S} from "./surahs.js";
-import {pad,iso,parse,addDays,diffDays,weekOfWs,planStamp,clampStart,giftStats,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,pageSegments,itemPageList,itemAyat,itemPages} from "./planner.js";
+import {pad,iso,parse,addDays,diffDays,weekOfWs,weekOfPlan,planStamp,clampStart,giftStats,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,pageSegments,itemPageList,itemAyat,itemPages} from "./planner.js";
 import {I,DAYS,DSHORT} from "./i18n.js";
 import {STAR,LOGO,THEMES,THEME_ORDER,giftSvg,ICON_GEAR,ICON_BACK} from "./themes.js";
 import {createFakeBackend} from "./backend-fake.js";
@@ -33,6 +33,10 @@ const esc=x=>String(x==null?"":x).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;"
 const $=id=>document.getElementById(id);
 const WS=()=>ST.profile.weekStart==null?(L()==="en"?0:6):ST.profile.weekStart;
 const weekOf=(s,ws)=>weekOfWs(s,ws==null?WS():ws);
+/* A child with the in-order plan has weeks of seven days counted from the day the plan was saved (planWeekStart in planner.js); everything else uses the account's week start.
+   weekOfK: the week of a child, weekOfH: the week of a class (follows the class plan). Dates are as the child sees them (clampStart). */
+const weekOfK=(k,s)=>weekOfPlan(clampStart(effPlan(k),today()),s==null?today():s,WS());
+const weekOfH=(h,s)=>weekOfPlan(clampStart(h&&h.plan,today()),s==null?today():s,WS());
 const nice=s=>new Intl.DateTimeFormat(L()==="en"?"en-GB":"ar-u-ca-gregory-nu-latn",{day:"numeric",month:"short"}).format(parse(s));
 const giftTail=k=>k.gift?' · '+t("gift_is",esc(k.gift)):'';
 const hij=s=>{if(!ST.profile.hijri)return"";
@@ -80,11 +84,11 @@ let gateOk=false,weekView=null,hDate=null,draft=null;
 let lastAct=Date.now();
 ["pointerdown","keydown","touchstart"].forEach(ev=>addEventListener(ev,()=>{lastAct=Date.now()},{passive:true,capture:true}));
 setInterval(()=>{if(gateOk&&lockExpired(lastAct,Date.now())&&needsGate()){gateOk=false;if(["settings","edit","hedit"].indexOf(nav.view)>-1){draft=null;go("main")}}},10000);
-function go(v,extra){nav=Object.assign({view:v},extra||{});weekView=null;render();window.scrollTo({top:0})}
+function go(v,extra){nav=Object.assign({view:v},extra||{});weekView=null;selDay=null;render();window.scrollTo({top:0})}
 const kidsList=()=>Object.values(ST.kids).sort((a,b)=>(a.created||0)-(b.created||0));
 const halaqaList=()=>Object.values(ST.halaqas).sort((a,b)=>(a.created||0)-(b.created||0));
 function childKid(){return prefs.child&&ST.user&&prefs.child.uid===ST.user.uid?ST.kids[prefs.child.kid]||null:null}
-function curKid(){const ck=childKid();if(ck)return ck;let k=ST.kids[prefs.cur];if(!k){k=kidsList()[0]||null;if(k)prefs.cur=k.id}return k}
+function curKid(){const ck=childKid();if(ck)return ck;let k=Object.prototype.hasOwnProperty.call(ST.kids,prefs.cur)?ST.kids[prefs.cur]:null;if(!k){k=kidsList()[0]||null;if(k)prefs.cur=k.id}return k}
 
 /* ================= render root ================= */
 let lastKey="";
@@ -124,7 +128,7 @@ function render(){
   const k=curKid();
   if(!k)return renderWelcome();
   if(v==="hist")return renderHist(k,{});
-  if(v==="report")return renderReport(k,{});
+  if(v==="report"){const rk=nav.kid&&Object.prototype.hasOwnProperty.call(ST.kids,nav.kid)?ST.kids[nav.kid]:k;if(rk!==k){prefs.cur=rk.id;savePrefs()}return renderReport(rk,{})}
   if(v==="record")return renderRecord(k,{});
   return renderKid(k);
 }
@@ -139,7 +143,7 @@ function maybeOnboard(k,m){
 }
 // update live parts without destroying inputs (path, stars, teacher rows)
 function refreshLive(){
-  if(nav.view==="main"&&$("path")){const k=childKid()||curKid();if(k&&modeOf(k)==="kids"){const w=weekView||weekOf(today());$("path").innerHTML=kidsScene(k,w,pickDay(w));bindScene(k,w)}}
+  if(nav.view==="main"&&$("path")){const k=childKid()||curKid();if(k&&modeOf(k)==="kids"){const w=weekView||weekOfK(k);$("path").innerHTML=kidsScene(k,w,pickDay(w));bindScene(k,w)}}
 }
 
 /* ================= pre-auth ================= */
@@ -207,7 +211,7 @@ const demoNote=()=>D.kind==="demo"?'<p class="status">'+t("demo_note")+'</p>':''
 function weekStats(k,w){return giftStats(clampStart(effPlan(k),today()),w,d=>{const r=day(k,d);return r?+(r.stars||0):0})}
 function renderMain(k){
   applyTheme(k.theme);
-  const w=weekView||weekOf(today()),isCur=w===weekOf(today()),T=THEMES[k.theme]||THEMES.space,h=halaqaOf(k);
+  const w=weekView||weekOfK(k),isCur=w===weekOfK(k),T=THEMES[k.theme]||THEMES.space,h=halaqaOf(k);
   app.innerHTML=topbar()+tabs(k)+hero(k,t("history"),null)+
    (h?'<p class="chipline">'+t("joined",esc(h.name))+(h.teacherName?' · '+t("teacher_of",esc(h.teacherName)):'')+'</p>':'')+
    '<section class="card"><div class="journey-top"><b>'+T.path[L()]+'</b><span class="score">'+t("stars_lbl")+' <strong id="starCount">0</strong> / 21</span></div><div class="path" id="path"></div><p class="gift-note" id="giftNote"></p></section>'+
@@ -412,7 +416,7 @@ function bindSlim(){
   if($("modeSeg"))$("modeSeg").querySelectorAll("button").forEach(b=>b.onclick=()=>{prefs.mode=b.dataset.m;savePrefs();go("main")});
   app.querySelectorAll(".tab[data-k]").forEach(b=>b.onclick=()=>{prefs.cur=b.dataset.k;selDay=null;savePrefs();go("main")});
 }
-function weekNav(w){const isCur=w===weekOf(today());return '<div class="weeknav"><button class="btn" id="wPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b>'+(hij(w)?'<small>'+hij(w)+' – '+hij(addDays(w,6))+'</small>':'')+'</span><button class="btn" id="wNext">'+t("next")+'</button></div>'+(isCur?'':'<button class="btn accent" id="wNow" style="align-self:center">'+t("this_week")+'</button>')}
+function weekNav(k,w){const isCur=w===weekOfK(k);return '<div class="weeknav"><button class="btn" id="wPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b>'+(hij(w)?'<small>'+hij(w)+' – '+hij(addDays(w,6))+'</small>':'')+'</span><button class="btn" id="wNext">'+t("next")+'</button></div>'+(isCur?'':'<button class="btn accent" id="wNow" style="align-self:center">'+t("this_week")+'</button>')}
 function bindWeekNav(w){$("wPrev").onclick=()=>{weekView=addDays(w,-7);selDay=null;render()};$("wNext").onclick=()=>{weekView=addDays(w,7);selDay=null;render()};if($("wNow"))$("wNow").onclick=()=>{weekView=null;selDay=null;render()}}
 function weekStrip(k,w,sel){
   let h='<div class="wstrip" role="tablist">';
@@ -441,14 +445,14 @@ function kidsScene(k,w,sel){
 }
 function renderKids(k){
   applyTheme(k.theme);setMode("kids");_modeKid="kids";
-  const w=weekView||weekOf(today()),sel=pickDay(w),T=THEMES[k.theme]||THEMES.space,s=weekStats(k,w),h=halaqaOf(k);
+  const w=weekView||weekOfK(k),sel=pickDay(w),T=THEMES[k.theme]||THEMES.space,s=weekStats(k,w),h=halaqaOf(k);
   const sub=L()==="en"?T.sub.en:T.sub.ar[k.gender==="f"?1:0];
   app.innerHTML=slimTop(k)+
    '<div class="kidhead"><div class="kh-text"><span class="kh-hi">'+t("salam")+'</span><span class="kh-name">'+esc(k.name)+'</span><span class="kh-sub">'+sub+'</span></div><span class="starchip">'+ICONS.star+'<b>'+s.tot+'</b></span></div>'+
    '<div class="scenewrap" id="path">'+kidsScene(k,w,sel)+'</div>'+
    '<p class="gift-note'+(s.open?" win":"")+'" id="giftNote">'+(s.open?t(k.gender==="f"?"win_f":"win_m",k.name):(s.need===0?"":s.left===1?t("left1"):s.left===2?t("left2"):t("leftN",s.left)))+(s.need?giftTail(k):'')+'</p>'+
    (h?'<p class="chipline">'+t("joined",esc(h.name))+'</p>':(ST.joins[k.id]||{}).status==="pending"?'<p class="chipline">'+t("join_pending",esc(ST.joins[k.id].name))+'</p>':'')+
-   weekNav(w)+'<div id="days" class="days"></div>'+demoNote()+bottomNav("main");
+   weekNav(k,w)+'<div id="days" class="days"></div>'+demoNote()+bottomNav("main");
   $("days").appendChild(makeDayCard(k,sel,PATHPTS.length,w,false,"kids"));
   afterRate=(kk,ww,i,v,cur,b)=>{$("path").innerHTML=kidsScene(kk,ww,sel);bindScene(kk,ww);if(v>cur)burst(b);maybeCelebrate(kk,ww)};
   bindSlim();bindNav();bindWeekNav(w);bindScene(k,w);maybeCelebrate(k,w);
@@ -480,14 +484,14 @@ function teenStats(k){
 function badge(on,txt,label,color){return '<span class="badge'+(on?"":" off")+'"><svg viewBox="0 0 60 60" aria-hidden="true"><g transform="translate(30 30)"><rect x="-19" y="-19" width="38" height="38" rx="4" fill="'+(on?color:"none")+'" stroke="'+(on?color:"var(--line)")+'" stroke-width="2"'+(on?'':' stroke-dasharray="4 3"')+'/><rect x="-19" y="-19" width="38" height="38" rx="4" fill="'+(on?color:"none")+'" stroke="'+(on?color:"var(--line)")+'" stroke-width="2" transform="rotate(45)"'+(on?'':' stroke-dasharray="4 3"')+'/></g><text x="30" y="35" text-anchor="middle" font-size="13" font-weight="700" fill="'+(on?"#ffffff":"var(--muted)")+'">'+txt+'</text></svg>'+label+'</span>'}
 function renderTeen(k){
   applyPalette(paletteFor(k));setMode("teens");_modeKid="teens";
-  const w=weekView||weekOf(today()),sel=pickDay(w),S2=teenStats(k),lv=levelInfo(S2.pts,L()),streak=streakOf(k);
+  const w=weekView||weekOfK(k),sel=pickDay(w),S2=teenStats(k),lv=levelInfo(S2.pts,L()),streak=streakOf(k);
   const ds=[...Array(7)].map((_,i)=>day(k,addDays(w,i))),kind=challengeFor(w),cp=challengeProgress(kind,ds);
   app.innerHTML=slimTop(k)+
    '<header class="bhead"><div class="bh-row"><div class="bh-name"><span>'+DAYS[L()][parse(today()).getDay()]+'</span><b>'+esc(k.name)+'</b></div><span class="flame">'+ICONS.flame+t("streak_n",streak)+'</span></div>'+
    '<div class="lvl"><div class="lvl-t"><span>'+t("level_n",lv.n,lv.name)+'</span><span>'+lv.into+' / '+lv.need+' '+t("points")+'</span></div><div class="bar"><i style="width:'+Math.round(lv.into/lv.need*100)+'%"></i></div></div></header>'+
    '<section class="badges">'+badge(S2.fullWeeks>0,"7",t("b_week"),"#d4a23a")+badge(S2.clean>=100,"100",t("b_clean"),"#0e5e4f")+badge(S2.juzDone.length>0,t("juz_short"),t("b_juz"),"#8b5cf6")+badge(S2.best>=30,"30",t("b_month"),"#c4552f")+'</section>'+
    '<section class="card chal"><div class="row between"><span class="eyebrow">'+t("challenge")+'</span><span class="hint">+'+PTS_CHALLENGE+' '+t("points")+'</span></div><b>'+t("ch_"+kind)+'</b><div class="row"><div class="bar grow"><i style="width:'+Math.min(100,Math.round(cp.v/cp.goal*100))+'%"></i></div><span class="hint">'+Math.min(cp.v,cp.goal)+' / '+cp.goal+'</span></div></section>'+
-   weekNav(w)+weekStrip(k,w,sel)+'<div id="days" class="days"></div>'+demoNote()+bottomNav("main","gear");
+   weekNav(k,w)+weekStrip(k,w,sel)+'<div id="days" class="days"></div>'+demoNote()+bottomNav("main","gear");
   $("days").appendChild(makeDayCard(k,sel,0,w,false,"teens"));
   afterRate=()=>{};
   bindSlim();bindNav();bindWeekNav(w);bindStrip();
@@ -502,7 +506,7 @@ function juzRing(cov){
 }
 function renderAdult(k){
   applyPalette(paletteFor(k));setMode("adults");_modeKid="adults";
-  const w=weekView||weekOf(today()),sel=pickDay(w),p=effPlan(k),cov=juzCoverage(p.surahs||[],p.ranges),full=cov.filter(c=>c.frac>=1).length;
+  const w=weekView||weekOfK(k),sel=pickDay(w),p=effPlan(k),cov=juzCoverage(p.surahs||[],p.ranges),full=cov.filter(c=>c.frac>=1).length;
   const mem=cov.reduce((a,c)=>a+c.got,0),pct=Math.round(mem/6236*1000)/10,A=analyse(k);
   const rows=cov.filter(c=>c.got>0).sort((a,b)=>b.juz-a.juz).map(c=>{const ss=surahsOfJuz(c.juz).filter(n=>A.lv[n]&&A.lv[n].n);const avg=ss.length?ss.reduce((a,n)=>a+A.lv[n].avg,0)/ss.length:null;
     const col=avg==null?"var(--line)":avg>=2.5?"var(--good)":avg>=1.5?"var(--mid)":"var(--bad)";
@@ -511,7 +515,7 @@ function renderAdult(k){
    '<header class="ahead"><div class="row between ah-top"><span>'+DAYS[L()][parse(today()).getDay()]+'، '+niceH(today())+'</span><span>'+esc(k.name)+'</span></div>'+
    '<svg class="ring" viewBox="0 0 180 180" role="img" aria-label="'+t("juz_full_n",full)+'">'+juzRing(cov)+'<text x="90" y="86" text-anchor="middle" class="rnum">'+full+'</text><text x="90" y="110" text-anchor="middle" class="rsub">'+t("of_30")+'</text></svg>'+
    '<b class="ah-title">'+t("hifz_journey")+'</b><span class="ah-sub">'+t("memorized_pct",pct,mem)+'</span></header>'+
-   weekNav(w)+weekStrip(k,w,sel)+'<div id="days" class="days"></div>'+
+   weekNav(k,w)+weekStrip(k,w,sel)+'<div id="days" class="days"></div>'+
    (rows?'<section class="card"><h3>'+t("strength_by_juz")+'</h3><div class="sgrid3">'+rows+'</div></section>':'')+demoNote()+bottomNav("main","gear");
   $("days").appendChild(makeDayCard(k,sel,0,w,false,"adults"));
   afterRate=()=>{};
@@ -527,8 +531,8 @@ function analyse(k){
     if(ts>0){uniq.forEach(n=>{const w=(r.tWeak||[]).indexOf(n)>-1;add(n,d,w?1:ts,w)})}
     if(r.nS)news.push({d,n:+r.nS,f:r.nF,t:r.nT});
   });
-  const p=effPlan(k),start=k.start||p.start||weekOf(today()),curW=weekOf(today());
-  const firstW=weekOf(dates[0]&&dates[0]<start?dates[0]:start),elapsed=Math.max(0,diffDays(firstW,today())+1);
+  const p=effPlan(k),start=k.start||p.start||weekOfK(k),curW=weekOfK(k);
+  const firstW=weekOfK(k,dates[0]&&dates[0]<start?dates[0]:start),elapsed=Math.max(0,diffDays(firstW,today())+1);
   let best=0,run=0,prev=null;done.forEach(d=>{run=(prev&&addDays(prev,1)===d)?run+1:1;if(run>best)best=run;prev=d});
   const perWeek=[];for(let w=firstW;w<=curW;w=addDays(w,7)){const s=weekStats(k,w);perWeek.push({w,stars:s.tot,days:s.rated})}
   const pool={};planUnits(p).forEach(u=>pool[u[0]]=1);Object.keys(occ).forEach(n=>pool[n]=1);
@@ -538,8 +542,8 @@ function analyse(k){
     lv[n]={level:last2?"bad":avg>=2.5?"good":avg>=1.5?"mid":"bad",avg,n:o.length,weakN:o.filter(x=>x.weak).length}});
   return{total,evald,elapsed,best,perWeek,lv,news:news.sort((a,b)=>a.d<b.d?1:-1)};
 }
-function chartSvg(pw){
-  const data=pw.slice(-12),W=320,H=150,Lp=26,B=24,T=12,cw=(W-Lp-6)/Math.max(data.length,1),y=v=>T+(H-T-B)*(1-v/21),cur=weekOf(today());
+function chartSvg(pw,cur){
+  const data=pw.slice(-12),W=320,H=150,Lp=26,B=24,T=12,cw=(W-Lp-6)/Math.max(data.length,1),y=v=>T+(H-T-B)*(1-v/21);
   let g="";[0,7,14,21].forEach(v=>{g+='<line x1="'+Lp+'" x2="'+(W-4)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="var(--line)"/><text x="'+(Lp-6)+'" y="'+(y(v)+4)+'" font-size="10" text-anchor="end" fill="var(--muted)">'+v+'</text>'});
   data.forEach((d,i)=>{const bw=Math.min(cw*0.64,34),x=Lp+i*cw+(cw-bw)/2,yy=y(d.stars);
     g+='<rect x="'+x.toFixed(1)+'" y="'+yy.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,y(0)-yy).toFixed(1)+'" rx="4" fill="'+(d.w===cur?"var(--accent)":"var(--accent2)")+'"/>';
@@ -558,18 +562,18 @@ function renderHist(k,o){
    '<section class="card"><h2>'+t("summary",esc(k.name))+'</h2><div class="kpis">'+
     '<div class="kpi"><b>'+A.perWeek.length+'</b><span>'+t("k_weeks")+'</span></div><div class="kpi"><b>'+A.total+'</b><span>'+t("k_total")+'</span></div><div class="kpi"><b>'+avg+'</b><span>'+t("k_avg")+'</span></div>'+
     '<div class="kpi"><b>'+rate+'%</b><span>'+t("k_rate",A.evald,A.elapsed)+'</span></div><div class="kpi"><b>'+A.best+'</b><span>'+t("k_streak")+'</span></div><div class="kpi"><b>'+cnt.good+'</b><span>'+t("k_good",ids.length)+'</span></div></div></section>'+
-   '<section class="card"><h2>'+t("chart_t")+'</h2><div class="chart">'+chartSvg(A.perWeek)+'</div><div class="legend"><span><i style="background:var(--accent2)"></i>'+t("chart_prev")+'</span><span><i style="background:var(--accent)"></i>'+t("chart_cur")+'</span><span>'+t("chart_max")+'</span></div></section>'+
+   '<section class="card"><h2>'+t("chart_t")+'</h2><div class="chart">'+chartSvg(A.perWeek,weekOfK(k))+'</div><div class="legend"><span><i style="background:var(--accent2)"></i>'+t("chart_prev")+'</span><span><i style="background:var(--accent)"></i>'+t("chart_cur")+'</span><span>'+t("chart_max")+'</span></div></section>'+
    '<section class="card"><h2>'+t("lv_t")+'</h2><div class="legend">'+["good","mid","bad","none"].map(l=>'<span><i style="background:var(--'+l+')"></i>'+LV[l]+' ('+cnt[l]+')</span>').join("")+'</div><div class="sgrid">'+
     ids.map(n=>{const v=A.lv[n];return '<div class="scell '+v.level+'"><span class="nm">'+esc(sName(n))+'</span><span class="sc">'+(v.n?(t("avg")+' '+v.avg.toFixed(1)+' · '+v.n+' '+t("times")+(v.weakN?' · '+t("mistake")+' '+v.weakN:'')):LV.none)+'</span></div>'}).join("")+'</div></section>'+
    '<section class="card"><h2>'+t("focus_t")+'</h2>'+(weakest.length?'<ul class="list">'+weakest.map(n=>{const v=A.lv[n];return '<li><span><span class="dot" style="background:var(--'+v.level+')"></span><span class="q">'+esc(sName(n))+'</span></span><span class="m">'+LV[v.level]+' · '+t("avg")+' '+v.avg.toFixed(1)+'</span></li>'}).join("")+'</ul>':'<p class="empty">'+t("focus_none")+'</p>')+'</section>'+
    '<section class="card"><h2>'+t("new_t")+'</h2>'+(A.news.length?'<ul class="list">'+A.news.map(x=>'<li><span class="t"><span class="q">'+esc(sName(x.n))+'</span> '+(x.f||x.t?'<span class="m">'+(x.f||"?")+'–'+(x.t||"?")+'</span>':'')+'</span><span class="m">'+DAYS[L()][parse(x.d).getDay()]+' '+nice(x.d)+'</span></li>').join("")+'</ul>':'<p class="empty">'+t("new_none")+'</p>')+'</section>'+
-   '<section class="card"><h2>'+t("weeks_t")+'</h2><ul class="list">'+A.perWeek.slice().reverse().map(d=>'<li><button data-w="'+d.w+'"><span>'+nice(d.w)+' – '+nice(addDays(d.w,6))+(d.w===weekOf(today())?' '+t("current"):'')+'</span><span class="m">'+d.stars+'★ · '+t("days_of",d.days)+'</span></button></li>').join("")+'</ul></section>';
+   '<section class="card"><h2>'+t("weeks_t")+'</h2><ul class="list">'+A.perWeek.slice().reverse().map(d=>'<li><button data-w="'+d.w+'"><span>'+nice(d.w)+' – '+nice(addDays(d.w,6))+(d.w===weekOfK(k)?' '+t("current"):'')+'</span><span class="m">'+d.stars+'★ · '+t("days_of",d.days)+'</span></button></li>').join("")+'</ul></section>';
   bindTop();
   const back=()=>o.teacher?go("student",{hid:o.hid,kid:k.id}):go("main");
   $("toggleView").onclick=back;
   $("hRep").onclick=()=>o.teacher?go("sreport",{hid:o.hid,kid:k.id}):go("report");
   $("hRec").onclick=()=>o.teacher?go("srecord",{hid:o.hid,kid:k.id}):go("record");
-  app.querySelectorAll("[data-w]").forEach(b=>b.onclick=()=>{const w=b.dataset.w===weekOf(today())?null:b.dataset.w;back();weekView=w;render()});
+  app.querySelectorAll("[data-w]").forEach(b=>b.onclick=()=>{const w=b.dataset.w===weekOfK(k)?null:b.dataset.w;back();weekView=w;render()});
 }
 
 /* ================= teacher ================= */
@@ -593,7 +597,7 @@ function renderHalaqa(h){
   const st=hFilter==="not"?all.filter(k=>!isDone(k)):all;
   const C=2*Math.PI*30,frac=all.length?dn/all.length:0;
   // most-missed surahs this week (home + class marks)
-  const w=weekOf(date),miss={};all.forEach(k=>{for(let i=0;i<7;i++){const r=day(k,addDays(w,i));if(!r)continue;new Set([...(r.weak||[]),...(r.tWeak||[])]).forEach(n=>miss[n]=(miss[n]||0)+1)}});
+  const w=weekOfH(h,date),miss={};all.forEach(k=>{for(let i=0;i<7;i++){const r=day(k,addDays(w,i));if(!r)continue;new Set([...(r.weak||[]),...(r.tWeak||[])]).forEach(n=>miss[n]=(miss[n]||0)+1)}});
   const top=Object.entries(miss).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const P=ST.profile;
   const wtxt=items=>esc(items.map(it=>sName(it[0])+((it[1]>1||it[2]<S[it[0]-1][2])?' '+it[1]+'–'+it[2]:'')).join("، "));
@@ -653,7 +657,7 @@ function renderSEdit(k,h){
 }
 function renderStudent(k,h){
   applyTheme(k.theme);
-  const w=weekView||weekOf(today()),isCur=w===weekOf(today());
+  const w=weekView||weekOfK(k),isCur=w===weekOfK(k);
   app.innerHTML=topbar()+'<div class="row between"><button class="btn" id="sBack">'+esc(h.name)+'</button><button class="btn" id="sRemove">'+t("remove_st")+'</button></div>'+hero(k,t("history"),t("joined",esc(h.name)))+studentPlanCard(k,h)+
    '<div class="weeknav"><button class="btn" id="wPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b></span><button class="btn" id="wNext">'+t("next")+'</button></div>'+
    (isCur?'':'<button class="btn accent" id="wNow" style="align-self:center">'+t("this_week")+'</button>')+'<div class="days" id="days"></div>';
@@ -947,7 +951,7 @@ function repData(k,w){
   return{home,cls,done,ayat,miss:Object.entries(miss).map(([n,c])=>[+n,c]).sort((a,b)=>b[1]-a[1]||a[0]-b[0]),news,tn,hn};
 }
 const dayLbl=d=>DAYS[L()][parse(d).getDay()]+' '+nice(d);
-const repWeek=()=>nav.w==="prev"?addDays(weekOf(today()),-7):(nav.w||weekOf(today()));
+const repWeek=cur=>nav.w==="prev"?addDays(cur,-7):(nav.w||cur);
 function repTop(title,sub){return '<header class="bhead rhead"><div class="bh-row"><div class="bh-name"><span>'+sub+'</span><b>'+title+'</b></div><span class="rlogo" aria-hidden="true">'+LOGO+'</span></div></header>'}
 function repNav(w){return '<div class="weeknav noprint"><button class="btn" id="rPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b></span><button class="btn" id="rNext">'+t("next")+'</button></div>'}
 function bindRep(w,back){
@@ -957,7 +961,7 @@ function bindRep(w,back){
 const repActs=()=>'<div class="row between noprint"><button class="btn" id="rBack">'+t("back")+'</button><button class="btn accent" id="rPdf">'+t("export_pdf")+'</button></div>';
 function renderReport(k,o){
   applyPalette(appTheme());setMode("");
-  const w=repWeek(),R=repData(k,w),P=repData(k,addDays(w,-7)),diff=R.home-P.home,inH=!!k.halaqaId;
+  const w=repWeek(weekOfK(k)),R=repData(k,w),P=repData(k,addDays(w,-7)),diff=R.home-P.home,inH=!!k.halaqaId;
   const cmp=diff>0?t("rep_up",diff):diff<0?t("rep_down",-diff):t("rep_same");
   const list=(arr,f)=>arr.length?'<ul class="list">'+arr.map(f).join("")+'</ul>':'<p class="empty">'+t("rep_none")+'</p>';
   app.innerHTML=repActs()+repTop(t("rep_of",esc(k.name)),t("week_report")+' · '+nice(w)+' – '+nice(addDays(w,6)))+repNav(w)+
@@ -975,7 +979,7 @@ function renderReport(k,o){
 }
 function renderHReport(h){
   applyPalette(appTheme());setMode("");D.subStudents(h.id);
-  const w=repWeek(),all=Object.values(ST.students[h.id]||{}).sort((a,b)=>a.name.localeCompare(b.name,"ar")),rows=all.map(k=>({k,r:repData(k,w)}));
+  const w=repWeek(weekOfH(h)),all=Object.values(ST.students[h.id]||{}).sort((a,b)=>a.name.localeCompare(b.name,"ar")),rows=all.map(k=>({k,r:repData(k,w)}));
   const full=rows.filter(x=>x.r.done===7).length,avg=rows.length?(rows.reduce((a,x)=>a+x.r.home,0)/rows.length).toFixed(1):"0",miss={};
   rows.forEach(x=>x.r.miss.forEach(([n,c])=>miss[n]=(miss[n]||0)+c));const top=Object.entries(miss).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const notDone=rows.filter(x=>x.r.done<7).sort((a,b)=>a.r.done-b.r.done);
@@ -1099,7 +1103,7 @@ function stopListen(close){
 /* open from a notification link: ?report=1 (parent, last week) or ?hreport=<halaqaId> (teacher) */
 (()=>{const q=new URLSearchParams(location.search);
   if(q.get("join")){prefs.pendingJoin=String(q.get("join")).trim().toUpperCase().slice(0,8);savePrefs();history.replaceState(null,"",location.pathname)}
-  if(q.get("report")){nav={view:"report",w:"prev"}}
+  if(q.get("report")){nav={view:"report",w:"prev",kid:String(q.get("kid")||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,64)}}
   else if(q.get("hreport")){prefs.mode="teach";nav={view:"hreport",hid:q.get("hreport"),w:"prev"}}
   if(q.get("report")||q.get("hreport"))history.replaceState(null,"",location.pathname);
 })();

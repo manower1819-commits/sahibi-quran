@@ -157,6 +157,16 @@ export function clampStart(p,today){
   return p;
 }
 
+/* The weekday (0 = Sunday) a plan's weeks begin on. A plan with the in-order distribution counts its weeks from the day it was saved, so its
+   week is the seven days from the weekday of its start (saved on a Wednesday: Wednesday to Tuesday). Any other plan, and a start that is not a
+   valid date, use the account's own week-start setting (`fallbackWs`). The same rule is in jobs/reminders.js (test/reminders.test.js checks they agree). */
+export function planWeekStart(p,fallbackWs){
+  if(p&&p.algo===ALGO_PAGES&&typeof p.start==="string"&&START_RE.test(p.start)){const d=parse(p.start);if(iso(d)===p.start)return d.getDay()}
+  return fallbackWs;
+}
+/* the first day of the week (in this plan's weeks) that contains the date s */
+export const weekOfPlan=(p,s,fallbackWs)=>weekOfWs(s,planWeekStart(p,fallbackWs));
+
 /* The days of the week starting on w that the weekly gift asks for. All seven, except for a plan with the in-order distribution that
    starts inside or after the week: the days before its start have no wird, so they are not asked for (a plan saved on Wednesday opens
    its first gift on the days from Wednesday to the end of that week). A week wholly before the start has none, so no gift. */
