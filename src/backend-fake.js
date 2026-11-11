@@ -41,9 +41,10 @@ export function createFakeBackend(){
     async resetPw(){return wait()},
     async saveProfile(p){const u=me();if(!u)return;u.profile=Object.assign(u.profile||{},C(p));refresh()},
     async saveKid(k){const d=C(k);delete d.id;d.parentUid=(db.kids[k.id]&&db.kids[k.id].parentUid)||db.session;db.kids[k.id]=Object.assign(db.kids[k.id]||{},d);refresh()},
-    async deleteKid(id){delete db.kids[id];delete db.days[id];refresh()},
+    async deleteKid(id){delete db.kids[id];delete db.days[id];Object.values(db.requests).forEach(rs=>{delete rs[id]});refresh()},
     subDays(){},
     subStudents(hid){if(!store.students[hid]){store.students[hid]={};setTimeout(refresh,0)}},
+    async fetchDays(){},
     async setDay(kidId,date,f){const m=db.days[kidId]||(db.days[kidId]={});m[date]=Object.assign(m[date]||{},C(f));refresh()},
     async saveHalaqa(h){const d=C(h);delete d.id;d.teacherUid=db.session;db.halaqas[h.id]=Object.assign(db.halaqas[h.id]||{},d);refresh()},
     async deleteHalaqa(id){Object.values(db.kids).forEach(k=>{if(k.halaqaId===id){k.halaqaId=null;k.teacherUid=null}});delete db.requests[id];delete db.halaqas[id];delete store.students[id];refresh()},
@@ -51,6 +52,7 @@ export function createFakeBackend(){
     // asking to join: the class's teacher decides (decideJoin); nothing is linked until then
     async requestJoin(kidId,code){const h=await this.findHalaqa(String(code).trim().toUpperCase());if(!h)return{err:"notfound"};const k=db.kids[kidId];
       const rs=db.requests[h.id]||(db.requests[h.id]={});
+      if(k.joinReq&&k.joinReq.hid&&k.joinReq.hid!==h.id&&db.requests[k.joinReq.hid])delete db.requests[k.joinReq.hid][kidId];   // asking another class replaces the first request
       if(!(rs[kidId]&&rs[kidId].status==="pending"))rs[kidId]={kidId,parentUid:db.session,teacherUid:h.teacherUid,kidName:String(k.name||"").slice(0,30),status:"pending",at:Date.now()};
       k.joinReq={hid:h.id,name:h.name||""};refresh();return wait({ok:true,pending:true,name:h.name})},
     async cancelJoin(kidId){const k=db.kids[kidId];if(k&&k.joinReq){if(db.requests[k.joinReq.hid])delete db.requests[k.joinReq.hid][kidId];k.joinReq=null}refresh()},
@@ -58,7 +60,7 @@ export function createFakeBackend(){
       if(approve&&k){k.halaqaId=hid;k.teacherUid=db.session;k.joinReq=null;delete db.requests[hid][kidId];refresh();return{linked:true}}
       r.status="rejected";refresh();return{linked:false}},
     async leaveHalaqa(kidId){const k=db.kids[kidId];if(k){if(k.halaqaId&&db.requests[k.halaqaId])delete db.requests[k.halaqaId][kidId];k.halaqaId=null;k.teacherUid=null}refresh()},
-    async removeStudent(kidId){return this.leaveHalaqa(kidId)},
+    async removeStudent(kidId){Object.values(db.halaqas).forEach(h=>{if(h.studentPlans)delete h.studentPlans[kidId]});return this.leaveHalaqa(kidId)},
     async codeTaken(code){return !!(await this.findHalaqa(code))},
     // co-parents: the owner makes a code (valid 48 h, one use); the other parent enters it
     async createCoInvite(kidId){const k=db.kids[kidId];if(!k||k.parentUid!==db.session)return{err:"notowner"};
@@ -71,8 +73,9 @@ export function createFakeBackend(){
       k.parentUids=Array.from(new Set([...(k.parentUids||[k.parentUid]),db.session]));(k.parentNames||(k.parentNames={}))[db.session]=String((me().profile||{}).name||"").slice(0,30);
       delete db.invites[code];refresh();return{ok:true}},
     async removeCoParent(kidId,uid){const k=db.kids[kidId];if(!k||k.parentUid!==db.session)return;k.parentUids=(k.parentUids||[]).filter(x=>x!==uid);if(k.parentNames)delete k.parentNames[uid];refresh()},
-    async leaveCoParent(kidId){const k=db.kids[kidId];if(!k)return;k.parentUids=(k.parentUids||[]).filter(x=>x!==db.session);refresh()},
+    async leaveCoParent(kidId){const k=db.kids[kidId];if(!k)return;k.parentUids=(k.parentUids||[]).filter(x=>x!==db.session);if(k.parentNames)delete k.parentNames[db.session];refresh()},
     async enablePush(){return wait("demo")},
+    async disablePush(){return "off"},
     async remindKid(){return wait("ok")},
     async notifyNote(){return wait("ok")},
     async deleteAccount(){const uid=db.session;Object.keys(db.halaqas).forEach(id=>{if(db.halaqas[id].teacherUid===uid)this.deleteHalaqa(id)});Object.keys(db.kids).forEach(id=>{if(db.kids[id].parentUid===uid){delete db.kids[id];delete db.days[id]}else if((db.kids[id].parentUids||[]).indexOf(uid)>-1)db.kids[id].parentUids=db.kids[id].parentUids.filter(x=>x!==uid)});delete db.users[uid];db.session=null;refresh()}

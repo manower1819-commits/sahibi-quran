@@ -1,7 +1,7 @@
 import {initializeApp} from "firebase/app";
 import {getAuth,onAuthStateChanged,createUserWithEmailAndPassword,signInWithEmailAndPassword,signOut as fbSignOut,sendPasswordResetEmail,deleteUser} from "firebase/auth";
 import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,doc,collection,query,where,onSnapshot,setDoc,updateDoc,deleteDoc,getDoc,getDocs,arrayUnion,arrayRemove,deleteField,serverTimestamp,addDoc} from "firebase/firestore";
-import {getMessaging,getToken,isSupported} from "firebase/messaging";
+import {getMessaging,getToken,deleteToken,isSupported} from "firebase/messaging";
 import {encode,decode} from "./codec.js";
 
 /* Same API as backend-fake.js. Everything the UI reads lives in `store`. */
@@ -35,7 +35,7 @@ export function createFirebaseBackend(cfg){
       const m=toMap(s);store.halaqas=m;
       Object.values(m).forEach(h=>{ensureCode(h);
         sub("rq:"+h.id,()=>onSnapshot(query(collection(db,"halaqas",h.id,"requests"),where("status","==","pending")),rs=>{const all=rs.docs.map(d=>Object.assign({id:d.id},d.data()));
-          all.filter(stale).forEach(x=>deleteDoc(doc(db,"halaqas",h.id,"requests",x.id)).catch(err));
+          all.filter(veryStale).forEach(x=>deleteDoc(doc(db,"halaqas",h.id,"requests",x.id)).catch(err));
           store.requests[h.id]=all.filter(x=>!stale(x)).sort((a,b)=>(a.at||0)-(b.at||0));emit()},err))});
       one()},e=>{err(e);one()}));
   });
@@ -59,10 +59,10 @@ export function createFirebaseBackend(cfg){
           if(cur.halaqaId!==jr.hid)await updateDoc(doc(db,"kids",k.id),{halaqaId:jr.hid,teacherUid:r.teacherUid,joinReq:null});
           else await updateDoc(doc(db,"kids",k.id),{joinReq:null});
           await deleteDoc(s.ref).catch(err);
-        }catch(e){err(e)}
+        }catch(e){err(e);store.joins[k.id]={hid:jr.hid,name:jr.name||"",status:"expired"};emit();return}   // the approval ran out before the link could be made: shown to the parent, who asks again
         delete store.joins[k.id];emit();return;
       }
-      if(r.status==="pending"&&stale(r)){delete store.joins[k.id];emit();return updateDoc(doc(db,"kids",k.id),{joinReq:null}).then(()=>deleteDoc(s.ref)).catch(err)}
+      if(r.status==="pending"&&veryStale(r)){delete store.joins[k.id];emit();return updateDoc(doc(db,"kids",k.id),{joinReq:null}).then(()=>deleteDoc(s.ref)).catch(err)}
       store.joins[k.id]={hid:jr.hid,name:jr.name||"",status:r.status};emit();
     },err));
   }
@@ -79,6 +79,8 @@ export function createFirebaseBackend(cfg){
   const wire=o=>encode(clean(o)); // what is written to Firestore (see codec.js)
   const STALE_MS=30*864e5; // the rules let a teacher decide a request only within 30 days of its creation
   const stale=r=>typeof r.at!=="number"||Date.now()-r.at>STALE_MS;
+  // a request is hidden once it is past 30 days, but deleted by the app only when it is past 60: a device whose clock is far ahead must not wipe valid requests
+  const veryStale=r=>typeof r.at!=="number"||Date.now()-r.at>2*STALE_MS;
   return {
     kind:"firebase",store,
     onChange(f){listeners.add(f);return()=>listeners.delete(f)},
@@ -87,7 +89,8 @@ export function createFirebaseBackend(cfg){
     signOut:()=>fbSignOut(auth),
     resetPw:email=>sendPasswordResetEmail(auth,email),
     saveProfile(p){if(!store.user)return Promise.resolve();Object.assign(store.profile,p);emit();return setDoc(doc(db,"users",store.user.uid),clean(p),{merge:true}).catch(err)},
-    saveKid(k){const d=clean(k);delete d.id;const ex=store.kids[k.id];d.parentUid=ex&&ex.parentUid?ex.parentUid:store.user.uid;store.kids[k.id]=Object.assign({},k,d);emit();subDays(k.id);return setDoc(doc(db,"kids",k.id),encode(d),{merge:true})},
+    saveKid(k){const d=clean(k);delete d.id;delete d.parentUids;delete d.parentNames;   // changed only by the invite, leave and remove commands: a save from an old copy must not undo them
+      const ex=store.kids[k.id];d.parentUid=ex&&ex.parentUid?ex.parentUid:store.user.uid;store.kids[k.id]=Object.assign({},k,d);emit();subDays(k.id);return setDoc(doc(db,"kids",k.id),encode(d),{merge:true})},
     async deleteKid(id){const k=store.kids[id];
       const ds=await getDocs(collection(db,"kids",id,"days"));await Promise.all(ds.docs.map(d=>deleteDoc(d.ref)));
       // a pending join request, and the unused invite with its record, would otherwise outlive the child
@@ -96,10 +99,21 @@ export function createFirebaseBackend(cfg){
       if(ps)for(const p of ps.docs){const code=p.data().code;if(code)await deleteDoc(doc(db,"invites",code)).catch(()=>{});await deleteDoc(p.ref).catch(()=>{})}
       await deleteDoc(doc(db,"kids",id))},
     subDays,subStudents,
-    setDay(kidId,date,f){const m=store.days[kidId]||(store.days[kidId]={});m[date]=Object.assign({},m[date],f);emit();return setDoc(doc(db,"kids",kidId,"days",date),wire(f),{merge:true}).catch(err)},
-    async saveHalaqa(h){const d=clean(h);delete d.id;d.teacherUid=store.user.uid;store.halaqas[h.id]=Object.assign({},h,d);emit();
+    // strict: let a failed write reject (the restore from a backup file must know about it); otherwise the error is only logged
+    setDay(kidId,date,f,strict){const m=store.days[kidId]||(store.days[kidId]={});m[date]=Object.assign({},m[date],f);emit();const p=setDoc(doc(db,"kids",kidId,"days",date),wire(f),{merge:true});return strict?p:p.catch(err)},
+    // read all of a child's days from the server now (the live listener may not have answered yet): used before a backup is made
+    async fetchDays(kidId){const s=await getDocs(collection(db,"kids",kidId,"days"));const m={};s.forEach(d=>{m[d.id]=decode(d.data())});store.days[kidId]=m;emit()},
+    async saveHalaqa(h){const d=clean(h);delete d.id;d.teacherUid=store.user.uid;const was=!!store.halaqas[h.id];store.halaqas[h.id]=Object.assign({},h,d);emit();
       await setDoc(doc(db,"halaqas",h.id),encode(d),{merge:true});
-      if(d.code){const cref=doc(db,"halaqaCodes",d.code),s=await getDoc(cref).catch(()=>null);if(!s||!s.exists())await setDoc(cref,{hid:h.id,teacherUid:store.user.uid});codeChecked.add(d.code)}},
+      if(d.code){const cref=doc(db,"halaqaCodes",d.code),s=await getDoc(cref).catch(()=>null);
+        if(s&&s.exists()&&s.data().hid!==h.id){   // two teachers made the same code at the same moment: the other class owns it, so this one must take another
+          if(!was){await deleteDoc(doc(db,"halaqas",h.id)).catch(err);delete store.halaqas[h.id];emit()}
+          throw Object.assign(new Error("class code already used"),{code:"sahibi/code-taken"})}
+        if(!s||!s.exists()){try{await setDoc(cref,{hid:h.id,teacherUid:store.user.uid})}
+          catch(e){if(e&&e.code==="permission-denied"){   // created by the other teacher a moment ago: the rules refuse to overwrite it
+            if(!was){await deleteDoc(doc(db,"halaqas",h.id)).catch(err);delete store.halaqas[h.id];emit()}
+            throw Object.assign(new Error("class code already used"),{code:"sahibi/code-taken"})}throw e}}
+        codeChecked.add(d.code)}},
     async deleteHalaqa(id){const h=store.halaqas[id];
       const sq=await getDocs(query(collection(db,"kids"),where("teacherUid","==",store.user.uid),where("halaqaId","==",id)));
       await Promise.all(sq.docs.map(d=>setDoc(d.ref,{halaqaId:null,teacherUid:null},{merge:true})));
@@ -113,8 +127,12 @@ export function createFirebaseBackend(cfg){
     // asking to join: the class's teacher decides (see decideJoin); nothing is linked until then
     async requestJoin(kidId,code){const h=await this.findHalaqa(code);if(!h)return{err:"notfound"};
       const k=store.kids[kidId],rref=doc(db,"halaqas",h.id,"requests",kidId);
+      if(k&&k.joinReq&&k.joinReq.hid&&k.joinReq.hid!==h.id)await deleteDoc(doc(db,"halaqas",k.joinReq.hid,"requests",kidId)).catch(err);   // asking another class replaces the first request
       const ex=await getDoc(rref).catch(()=>null);
-      if(ex&&ex.exists()){if(ex.data().status==="pending"&&!stale(ex.data())){return{ok:true,pending:true,name:h.name}}await deleteDoc(rref)}
+      if(ex&&ex.exists()){if(ex.data().status==="pending"&&!stale(ex.data())){
+          const jr0={hid:h.id,name:h.name||""};await setDoc(doc(db,"kids",kidId),{joinReq:jr0},{merge:true}).catch(err);   // the request is waiting: make sure the child records it
+          if(k)k.joinReq=jr0;store.joins[kidId]={hid:h.id,name:h.name||"",status:"pending"};emit();return{ok:true,pending:true,name:h.name}}
+        await deleteDoc(rref)}
       await setDoc(rref,{kidId,parentUid:store.user.uid,teacherUid:h.teacherUid,kidName:String((k&&k.name)||"").slice(0,30),status:"pending",at:Date.now()});
       const jr={hid:h.id,name:h.name||""};await setDoc(doc(db,"kids",kidId),{joinReq:jr},{merge:true});
       if(k)k.joinReq=jr;store.joins[kidId]={hid:h.id,name:h.name||"",status:"pending"};emit();return{ok:true,pending:true,name:h.name}},
@@ -133,13 +151,18 @@ export function createFirebaseBackend(cfg){
       if(k)Object.assign(k,{halaqaId:null,teacherUid:null});emit();
       await setDoc(doc(db,"kids",kidId),{halaqaId:null,teacherUid:null},{merge:true})},
     async removeStudent(kidId){const hid=Object.keys(store.students).find(h=>store.students[h]&&store.students[h][kidId]);
-      if(hid)await deleteDoc(doc(db,"halaqas",hid,"requests",kidId)).catch(()=>{});
+      if(hid){await deleteDoc(doc(db,"halaqas",hid,"requests",kidId)).catch(()=>{});
+        // the student's own plan in the class document goes too (it would come back if the child joined the class again)
+        const hd=store.halaqas[hid];if(hd&&hd.studentPlans&&hd.studentPlans[kidId]){delete hd.studentPlans[kidId];emit()}
+        await updateDoc(doc(db,"halaqas",hid),{["studentPlans."+kidId]:deleteField()}).catch(err)}
       await setDoc(doc(db,"kids",kidId),{halaqaId:null,teacherUid:null},{merge:true})},
     async codeTaken(code){const s=await getDoc(doc(db,"halaqaCodes",String(code).toUpperCase()));return s.exists()},
     // co-parents: the owner makes a code (valid 48 h, one use); the other parent enters it
     async createCoInvite(kidId){const k=store.kids[kidId],uid=store.user.uid;if(!k||k.parentUid!==uid)return{err:"notowner"};
       const A="ABCDEFGHJKMNPQRSTUVWXYZ23456789",rnd=crypto.getRandomValues(new Uint8Array(8));let code="";for(const x of rnd)code+=A[x%A.length];
       const exp=Date.now()+48*3600e3;
+      const old=await getDoc(doc(db,"kids",kidId,"private","invite")).catch(()=>null);   // an earlier unused invite stops working
+      if(old&&old.exists()&&old.data().code)await deleteDoc(doc(db,"invites",old.data().code)).catch(err);
       await setDoc(doc(db,"invites",code),{kidId,ownerUid:uid,exp,claimedBy:null});
       await setDoc(doc(db,"kids",kidId,"private","invite"),{code});
       await updateDoc(doc(db,"kids",kidId),{parentUids:arrayUnion(uid)});
@@ -150,7 +173,10 @@ export function createFirebaseBackend(cfg){
       if(inv.exp<Date.now())return{err:"expired"};if(inv.claimedBy&&inv.claimedBy!==uid)return{err:"used"};
       if(!inv.claimedBy)await updateDoc(iref,{claimedBy:uid});
       await updateDoc(doc(db,"kids",inv.kidId),{parentUids:arrayUnion(uid),["parentNames."+uid]:String(store.profile.name||"").slice(0,30)});
-      await deleteDoc(iref).catch(err);await deleteDoc(doc(db,"kids",inv.kidId,"private","invite")).catch(err);return{ok:true}},
+      await deleteDoc(iref).catch(err);
+      const pref=doc(db,"kids",inv.kidId,"private","invite"),ps=await getDoc(pref).catch(()=>null);
+      if(ps&&ps.exists()&&ps.data().code===code)await deleteDoc(pref).catch(err);   // not the pointer of a newer invite
+      return{ok:true}},
     async removeCoParent(kidId,uid){const k=store.kids[kidId];if(!k||k.parentUid!==store.user.uid)return;
       const pref=doc(db,"kids",kidId,"private","invite"),ps=await getDoc(pref).catch(()=>null);
       if(ps&&ps.exists()&&ps.data().code)await deleteDoc(doc(db,"invites",ps.data().code)).catch(err);
@@ -167,6 +193,16 @@ export function createFirebaseBackend(cfg){
       if(target.kidId)await setDoc(doc(db,"kids",target.kidId),{tokens:arrayUnion(token)},{merge:true});
       else await setDoc(doc(db,"users",store.user.uid),{tokens:arrayUnion(token)},{merge:true});
       return "ok";
+    },
+    // this device stops getting notifications for that account/child: its token is taken out of the document and invalidated. Never throws (best effort when signing out).
+    async disablePush(target){
+      try{if(!(await isSupported())||typeof Notification==="undefined"||Notification.permission!=="granted")return "off";
+        const reg=await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js");if(!reg)return "off";
+        const m=getMessaging(app),token=await getToken(m,{vapidKey:cfg.vapidKey,serviceWorkerRegistration:reg});
+        if(token){const ref=target&&target.kidId?doc(db,"kids",target.kidId):store.user?doc(db,"users",store.user.uid):null;
+          if(ref)await updateDoc(ref,{tokens:arrayRemove(token)}).catch(err)}
+        await deleteToken(m).catch(err);return "off"}
+      catch(e){err(e);return "off"}
     },
     async remindKid(kidId,lang){await addDoc(collection(db,"reminders"),{kidId,teacherUid:store.user.uid,lang,at:Date.now()});return "ok"},
     async notifyNote(kidId,lang){await addDoc(collection(db,"reminders"),{kidId,teacherUid:store.user.uid,lang,at:Date.now(),kind:"note"});return "ok"},

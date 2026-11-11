@@ -8,9 +8,9 @@ import {avatar,LOOKS,SKINS} from "./avatar.js";
 import {PALETTES,PALETTE_ORDER} from "./palettes.js";
 import {juzCoverage,surahsOfJuz} from "./juz.js";
 import {pageStrugglers} from "./strength.js";
-import {validPin,makePin,checkPin,failState,waitLeft,lockExpired} from "./pin.js";
-import {makeBackup,parseBackup,MAX_FILE_BYTES} from "./backup.js";
-import {parseQuranText,quranTextComplete,splitBasmala,QURAN_TEXT_URL} from "./quran-text.js";
+import {validPin,makePin,checkPin,failState,parseFail,waitLeft,lockExpired} from "./pin.js";
+import {makeBackup,parseBackup,MAX_FILE_BYTES,MAX_TOTAL_DAYS} from "./backup.js";
+import {parseQuranText,quranTextComplete,splitBasmala,QURAN_TEXT_URL,RECITERS,ayahUrl} from "./quran-text.js";
 import {PTS_STAR,PTS_WEEK,PTS_CHALLENGE,levelInfo,challengeFor,challengeProgress} from "./gamify.js";
 
 /* ================= backend ================= */
@@ -23,10 +23,13 @@ const ST=D.store;
 const LP="sahibi-prefs";
 let prefs={lang:null,mode:"kids",cur:null,child:null};
 try{prefs=Object.assign(prefs,JSON.parse(localStorage.getItem(LP)||"{}"))}catch(e){}
+const PF="sahibi-pinfail";
+function loadPinFail(){try{return parseFail(JSON.parse(localStorage.getItem(PF)||"null"),Date.now())}catch(e){return null}}
+function savePinFail(s){try{if(s)localStorage.setItem(PF,JSON.stringify(s));else localStorage.removeItem(PF)}catch(e){}}
 const savePrefs=()=>{try{localStorage.setItem(LP,JSON.stringify(prefs))}catch(e){}};
 
 /* ================= helpers ================= */
-const L=()=>prefs.lang||ST.profile.lang||"ar";
+const L=()=>{const v=prefs.lang||ST.profile.lang;return v==="en"?"en":"ar"};   // a stored value that is neither is Arabic: it is used as a key into the texts
 function t(k){let s=(I[L()]&&I[L()][k])||I.ar[k]||k;for(let i=1;i<arguments.length;i++)s=s.split("{"+(i-1)+"}").join(arguments[i]);return s}
 const sName=n=>S[n-1][L()==="en"?1:0];
 const esc=x=>String(x==null?"":x).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
@@ -82,8 +85,10 @@ let nav={view:"main"};       // main | hist | gate | settings | edit | halaqa | 
 let gateOk=false,weekView=null,hDate=null,draft=null;
 // the settings lock closes by itself after 5 minutes without a touch or a key
 let lastAct=Date.now();
-["pointerdown","keydown","touchstart"].forEach(ev=>addEventListener(ev,()=>{lastAct=Date.now()},{passive:true,capture:true}));
+["pointerdown","keydown","touchstart","scroll","input","focusin"].forEach(ev=>addEventListener(ev,()=>{lastAct=Date.now()},{passive:true,capture:true}));   // reading a long list or typing in a form is not idleness
 setInterval(()=>{if(gateOk&&lockExpired(lastAct,Date.now())&&needsGate()){gateOk=false;if(["settings","edit","hedit"].indexOf(nav.view)>-1){draft=null;go("main")}}},10000);
+const viewWeek=k=>weekView&&weekOfK(k,weekView)===weekView?weekView:weekOfK(k);   // a shown week that no longer fits the child's weeks (their plan changed meanwhile) gives way to the current one
+const quick=(p,ms=4000)=>Promise.race([Promise.resolve(p).catch(()=>{}),new Promise(r=>setTimeout(r,ms))]);   // best effort, never longer than ms: signing out must not wait for a network that is down
 function go(v,extra){nav=Object.assign({view:v},extra||{});weekView=null;selDay=null;render();window.scrollTo({top:0})}
 const kidsList=()=>Object.values(ST.kids).sort((a,b)=>(a.created||0)-(b.created||0));
 const halaqaList=()=>Object.values(ST.halaqas).sort((a,b)=>(a.created||0)-(b.created||0));
@@ -109,7 +114,7 @@ function render(){
   if(!ST.user)return renderAuth();
   if(ST.user&&ST.profile&&ST.profile.lang!==prefs.lang&&ST.ready)D.saveProfile({lang:prefs.lang});
   const v=nav.view;
-  if(prefs.pendingJoin&&["edit","gate","settings"].indexOf(v)<0)return renderJoin();
+  if(prefs.pendingJoin&&["edit","gate","settings"].indexOf(v)<0&&!childKid()){if(needsGate()&&!gateOk)return renderGate();return renderJoin()}
   if(v==="gate")return renderGate();
   if(v==="settings")return renderSettings();
   if(v==="edit")return renderEdit();
@@ -143,7 +148,7 @@ function maybeOnboard(k,m){
 }
 // update live parts without destroying inputs (path, stars, teacher rows)
 function refreshLive(){
-  if(nav.view==="main"&&$("path")){const k=childKid()||curKid();if(k&&modeOf(k)==="kids"){const w=weekView||weekOfK(k);$("path").innerHTML=kidsScene(k,w,pickDay(w));bindScene(k,w)}}
+  if(nav.view==="main"&&$("path")){const k=childKid()||curKid();if(k&&modeOf(k)==="kids"){const w=viewWeek(k);$("path").innerHTML=kidsScene(k,w,pickDay(w));bindScene(k,w)}}
 }
 
 /* ================= pre-auth ================= */
@@ -211,7 +216,7 @@ const demoNote=()=>D.kind==="demo"?'<p class="status">'+t("demo_note")+'</p>':''
 function weekStats(k,w){return giftStats(clampStart(effPlan(k),today()),w,d=>{const r=day(k,d);return r?+(r.stars||0):0})}
 function renderMain(k){
   applyTheme(k.theme);
-  const w=weekView||weekOfK(k),isCur=w===weekOfK(k),T=THEMES[k.theme]||THEMES.space,h=halaqaOf(k);
+  const w=viewWeek(k),isCur=w===weekOfK(k),T=THEMES[k.theme]||THEMES.space,h=halaqaOf(k);
   app.innerHTML=topbar()+tabs(k)+hero(k,t("history"),null)+
    (h?'<p class="chipline">'+t("joined",esc(h.name))+(h.teacherName?' · '+t("teacher_of",esc(h.teacherName)):'')+'</p>':'')+
    '<section class="card"><div class="journey-top"><b>'+T.path[L()]+'</b><span class="score">'+t("stars_lbl")+' <strong id="starCount">0</strong> / 21</span></div><div class="path" id="path"></div><p class="gift-note" id="giftNote"></p></section>'+
@@ -275,7 +280,7 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
     html+=extras.split('<label class="field"><span class="sec-t">'+t("notes"))[0]+starRow("h",t("stars"))+teacherBox+'<label class="field"><span class="sec-t">'+t("notes")+'</span><textarea data-f="notes" id="no-'+date+'" rows="1"></textarea></label>';
   }
   el.innerHTML=html;
-  el.querySelectorAll("input[data-f],textarea[data-f]").forEach(inp=>{inp.value=r[inp.dataset.f]||"";let tm;inp.addEventListener("input",()=>{clearTimeout(tm);tm=setTimeout(()=>{let v=inp.value;if(inp.type==="number"){const n=+el.querySelector("[data-f=nS]").value;v=v===""?"":Math.max(1,Math.min(n?S[n-1][2]:286,Math.round(+v)||1));}setField(k,date,{[inp.dataset.f]:v});if(teacherMode&&inp.dataset.f==="tNotes")notifyNote(k,date,v);askAdd()},500)})});
+  el.querySelectorAll("input[data-f],textarea[data-f]").forEach(inp=>{inp.value=r[inp.dataset.f]||"";if(teacherMode&&inp.dataset.f==="tNotes")inp.addEventListener("change",()=>setTimeout(()=>notifyNote(k,date,inp.value),1200));let tm;inp.addEventListener("input",()=>{clearTimeout(tm);tm=setTimeout(()=>{let v=inp.value;if(inp.type==="number"){const n=+el.querySelector("[data-f=nS]").value;v=v===""?"":Math.max(1,Math.min(n?S[n-1][2]:286,Math.round(+v)||1));}setField(k,date,{[inp.dataset.f]:v});askAdd()},500)})});
   const sel=el.querySelector("select[data-f]");if(sel)sel.addEventListener("change",e=>{const v=+e.target.value||"";setField(k,date,{nS:v});askAdd();if(v)el.querySelectorAll("input[type=number]").forEach(x=>x.max=S[v-1][2])});
   // after the parent logs new memorization, offer to add it to the review plan (own plan only: never over a teacher's plan, never from the child's device)
   const askBox=el.querySelector(".addrev");
@@ -363,7 +368,7 @@ function setPalette(id){const P=PALETTES[id]||PALETTES.emerald,root=document.doc
 function applyPalette(id){applyTheme(null);setPalette(id)}
 function paletteGrid(id,sel,withDefault){
   const opts=(withDefault?[""]:[]).concat(PALETTE_ORDER);
-  return '<div class="pals" id="'+id+'">'+opts.map(k=>{const P=k?PALETTES[k]:PALETTES[appTheme()];const v=P.v;
+  return '<div class="pals" id="'+id+'">'+opts.map(k=>{const P=PALETTES[k||appTheme()]||PALETTES.emerald;const v=P.v;
     return '<button type="button" class="pal" data-pal="'+k+'" aria-pressed="'+(k===(sel||""))+'"><span class="pal-prev" style="background:'+v.bg+'"><i style="background:'+v.hero+'"></i><b style="background:'+v.surface+'"><u style="background:'+v.accent2+'"></u><s style="background:'+v.star+'"></s></b></span><span>'+(k?P[L()]:t("same_as_app"))+'</span></button>'}).join("")+'</div>';
 }
 function setMode(m){document.body.dataset.mode=m||""}
@@ -445,7 +450,7 @@ function kidsScene(k,w,sel){
 }
 function renderKids(k){
   applyTheme(k.theme);setMode("kids");_modeKid="kids";
-  const w=weekView||weekOfK(k),sel=pickDay(w),T=THEMES[k.theme]||THEMES.space,s=weekStats(k,w),h=halaqaOf(k);
+  const w=viewWeek(k),sel=pickDay(w),T=THEMES[k.theme]||THEMES.space,s=weekStats(k,w),h=halaqaOf(k);
   const sub=L()==="en"?T.sub.en:T.sub.ar[k.gender==="f"?1:0];
   app.innerHTML=slimTop(k)+
    '<div class="kidhead"><div class="kh-text"><span class="kh-hi">'+t("salam")+'</span><span class="kh-name">'+esc(k.name)+'</span><span class="kh-sub">'+sub+'</span></div><span class="starchip">'+ICONS.star+'<b>'+s.tot+'</b></span></div>'+
@@ -484,7 +489,7 @@ function teenStats(k){
 function badge(on,txt,label,color){return '<span class="badge'+(on?"":" off")+'"><svg viewBox="0 0 60 60" aria-hidden="true"><g transform="translate(30 30)"><rect x="-19" y="-19" width="38" height="38" rx="4" fill="'+(on?color:"none")+'" stroke="'+(on?color:"var(--line)")+'" stroke-width="2"'+(on?'':' stroke-dasharray="4 3"')+'/><rect x="-19" y="-19" width="38" height="38" rx="4" fill="'+(on?color:"none")+'" stroke="'+(on?color:"var(--line)")+'" stroke-width="2" transform="rotate(45)"'+(on?'':' stroke-dasharray="4 3"')+'/></g><text x="30" y="35" text-anchor="middle" font-size="13" font-weight="700" fill="'+(on?"#ffffff":"var(--muted)")+'">'+txt+'</text></svg>'+label+'</span>'}
 function renderTeen(k){
   applyPalette(paletteFor(k));setMode("teens");_modeKid="teens";
-  const w=weekView||weekOfK(k),sel=pickDay(w),S2=teenStats(k),lv=levelInfo(S2.pts,L()),streak=streakOf(k);
+  const w=viewWeek(k),sel=pickDay(w),S2=teenStats(k),lv=levelInfo(S2.pts,L()),streak=streakOf(k);
   const ds=[...Array(7)].map((_,i)=>day(k,addDays(w,i))),kind=challengeFor(w),cp=challengeProgress(kind,ds);
   app.innerHTML=slimTop(k)+
    '<header class="bhead"><div class="bh-row"><div class="bh-name"><span>'+DAYS[L()][parse(today()).getDay()]+'</span><b>'+esc(k.name)+'</b></div><span class="flame">'+ICONS.flame+t("streak_n",streak)+'</span></div>'+
@@ -506,7 +511,7 @@ function juzRing(cov){
 }
 function renderAdult(k){
   applyPalette(paletteFor(k));setMode("adults");_modeKid="adults";
-  const w=weekView||weekOfK(k),sel=pickDay(w),p=effPlan(k),cov=juzCoverage(p.surahs||[],p.ranges),full=cov.filter(c=>c.frac>=1).length;
+  const w=viewWeek(k),sel=pickDay(w),p=effPlan(k),cov=juzCoverage(p.surahs||[],p.ranges),full=cov.filter(c=>c.frac>=1).length;
   const mem=cov.reduce((a,c)=>a+c.got,0),pct=Math.round(mem/6236*1000)/10,A=analyse(k);
   const rows=cov.filter(c=>c.got>0).sort((a,b)=>b.juz-a.juz).map(c=>{const ss=surahsOfJuz(c.juz).filter(n=>A.lv[n]&&A.lv[n].n);const avg=ss.length?ss.reduce((a,n)=>a+A.lv[n].avg,0)/ss.length:null;
     const col=avg==null?"var(--line)":avg>=2.5?"var(--good)":avg>=1.5?"var(--mid)":"var(--bad)";
@@ -532,7 +537,7 @@ function analyse(k){
     if(r.nS)news.push({d,n:+r.nS,f:r.nF,t:r.nT});
   });
   const p=effPlan(k),start=k.start||p.start||weekOfK(k),curW=weekOfK(k);
-  const firstW=weekOfK(k,dates[0]&&dates[0]<start?dates[0]:start),elapsed=Math.max(0,diffDays(firstW,today())+1);
+  const d0=dates.find(d=>d>="2000-01-01"),firstW=weekOfK(k,d0&&d0<start?d0:start),elapsed=Math.max(0,diffDays(firstW,today())+1);
   let best=0,run=0,prev=null;done.forEach(d=>{run=(prev&&addDays(prev,1)===d)?run+1:1;if(run>best)best=run;prev=d});
   const perWeek=[];for(let w=firstW;w<=curW;w=addDays(w,7)){const s=weekStats(k,w);perWeek.push({w,stars:s.tot,days:s.rated})}
   const pool={};planUnits(p).forEach(u=>pool[u[0]]=1);Object.keys(occ).forEach(n=>pool[n]=1);
@@ -657,7 +662,7 @@ function renderSEdit(k,h){
 }
 function renderStudent(k,h){
   applyTheme(k.theme);
-  const w=weekView||weekOfK(k),isCur=w===weekOfK(k);
+  const w=viewWeek(k),isCur=w===weekOfK(k);
   app.innerHTML=topbar()+'<div class="row between"><button class="btn" id="sBack">'+esc(h.name)+'</button><button class="btn" id="sRemove">'+t("remove_st")+'</button></div>'+hero(k,t("history"),t("joined",esc(h.name)))+studentPlanCard(k,h)+
    '<div class="weeknav"><button class="btn" id="wPrev">'+t("prev")+'</button><span class="lbl">'+t("week")+'<b>'+nice(w)+' – '+nice(addDays(w,6))+'</b></span><button class="btn" id="wNext">'+t("next")+'</button></div>'+
    (isCur?'':'<button class="btn accent" id="wNow" style="align-self:center">'+t("this_week")+'</button>')+'<div class="days" id="days"></div>';
@@ -667,7 +672,7 @@ function renderStudent(k,h){
   $("spEdit").onclick=()=>{const sp=(h.studentPlans||{})[k.id],src=planHas(sp)?sp:planHas(h.plan)?h.plan:null;
     draft={_p:src?{surahs:(src.surahs||[]).slice(),ranges:(src.ranges||[]).map(r=>r.slice()),cycle:src.cycle||1}:{surahs:[],ranges:[],cycle:1}};go("sedit",{hid:h.id,kid:k.id})};
   if($("spOff")){let armed=false;$("spOff").onclick=async()=>{if(!armed){armed=true;$("spOff").className="btn warn";$("spOff").textContent=t("del2");return}
-    await D.saveHalaqa(Object.assign({},h,{studentPlans:Object.assign({},h.studentPlans||{},{[k.id]:null})}));render()}}
+    try{await D.saveHalaqa(Object.assign({},h,{studentPlans:Object.assign({},h.studentPlans||{},{[k.id]:null})}));render()}catch(e){armed=false;$("spOff").className="btn";$("spOff").textContent=t("err_generic")}}}
   $("wPrev").onclick=()=>{weekView=addDays(w,-7);render()};$("wNext").onclick=()=>{weekView=addDays(w,7);render()};
   if($("wNow"))$("wNow").onclick=()=>{weekView=null;render()};
   let armed=false;$("sRemove").onclick=async()=>{if(!armed){armed=true;$("sRemove").className="btn warn";$("sRemove").textContent=t("del2");return}await D.removeStudent(k.id);delete (ST.students[h.id]||{})[k.id];go("halaqa",{hid:h.id})};
@@ -677,25 +682,25 @@ function copyText(txt,msgEl){const ok=()=>{msgEl.textContent=t("copied")};try{na
 
 /* ================= gate & settings ================= */
 let gA=0,gB=0;
-let pinFail=null;
+let pinFail=loadPinFail();const setPinFail=s=>{pinFail=s;savePinFail(s)};
 function renderGate(){
   applyTheme(null);gA=3+Math.floor(Math.random()*7);gB=3+Math.floor(Math.random()*7);
   const pin=ST.profile.pin&&ST.profile.pin.h?ST.profile.pin:null;
   app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t("app")+'</span><button class="iconbtn" id="gBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div><section class="card gatebox"><h2>'+t("settings")+'</h2>'+
     (pin?'<p class="msg">'+t("gate_pin_q")+'</p><input id="gIn" type="password" inputmode="numeric" maxlength="4" autocomplete="off" dir="ltr"><button class="btn primary big" id="gGo">'+t("gate_go")+'</button><p class="msg err" id="gMsg"></p><button type="button" class="linkbtn" id="gForgot">'+t("pin_forgot")+'</button><div id="gReset" hidden><input id="gPw" type="password" autocomplete="current-password" placeholder="'+t("pin_pw")+'"><button class="btn" id="gPwGo">'+t("pin_reset")+'</button></div>'
        :'<p class="msg">'+t("gate_q")+'</p><span class="q">'+gA+' × '+gB+' = ?</span><input id="gIn" type="number" inputmode="numeric" autocomplete="off"><button class="btn primary big" id="gGo">'+t("gate_go")+'</button><p class="msg err" id="gMsg"></p>')+'</section>';
-  $("gBack").onclick=()=>go("main");
-  const open=()=>{gateOk=true;lastAct=Date.now();go("settings")};
+  $("gBack").onclick=()=>{if(nav.view!=="gate"){prefs.pendingJoin=null;savePrefs()}go("main")};   // the lock that came up for a join link: backing out drops the link; the settings lock keeps it
+  const open=()=>{gateOk=true;lastAct=Date.now();go(prefs.pendingJoin&&nav.view!=="gate"?"main":"settings")};
   const ok=async()=>{
     if(pin){const w=waitLeft(pinFail,Date.now());if(w>0){$("gMsg").textContent=t("pin_wait",w);return}
-      if(await checkPin($("gIn").value,pin)){pinFail=null;open();return}
-      pinFail=failState(pinFail,Date.now());const w2=waitLeft(pinFail,Date.now());$("gMsg").textContent=w2>0?t("pin_wait",w2):t("gate_wrong");$("gIn").value="";return}
+      if(await checkPin($("gIn").value,pin)){setPinFail(null);open();return}
+      setPinFail(failState(pinFail,Date.now()));const w2=waitLeft(pinFail,Date.now());$("gMsg").textContent=w2>0?t("pin_wait",w2):t("gate_wrong");$("gIn").value="";return}
     if(+$("gIn").value===gA*gB)open();else{$("gMsg").textContent=t("gate_wrong");$("gIn").value=""}};
   $("gGo").onclick=ok;$("gIn").addEventListener("keydown",e=>{if(e.key==="Enter")ok()});
   if(pin){
     $("gForgot").onclick=()=>{$("gReset").hidden=false;$("gPw").focus()};
     $("gPwGo").onclick=async()=>{$("gPwGo").disabled=true;
-      try{await D.signIn(ST.user.email,$("gPw").value);await D.saveProfile({pin:null});pinFail=null;open()}
+      try{await D.signIn(ST.user.email,$("gPw").value);await D.saveProfile({pin:null});setPinFail(null);open()}
       catch(e){$("gMsg").textContent=t(e&&e.code&&I[L()][e.code]?e.code:"pin_pw_bad");$("gPwGo").disabled=false}}}
 }
 function timeOptions(sel){let o='<option value="">'+t("off")+'</option>';for(let m=5*60;m<24*60;m+=15){const v=pad(Math.floor(m/60))+":"+pad(m%60);o+='<option value="'+v+'"'+(v===sel?' selected':'')+'>'+v+'</option>'}return o}
@@ -712,14 +717,14 @@ function renderSettings(){
    '<section class="card"><h2 class="sh">'+ICONS.people+t("co_join_t")+'</h2><p class="about">'+t("co_join_p")+'</p><div class="row"><input id="coCode" class="codein" dir="ltr" maxlength="8" placeholder="'+t("co_code")+'" autocomplete="off"><button class="btn primary" id="coGo">'+t("co_join")+'</button></div><p class="msg" id="coJMsg"></p></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.book+t("myhalaqas")+'</h2>'+(halaqaList().length?halaqaList().map(h=>'<div class="kidrow"><span class="t"><b>'+esc(h.name)+'</b><small dir="ltr">'+esc(h.code)+'</small></span><button class="btn" data-he="'+h.id+'">'+t("edit_kid")+'</button></div>').join(""):'<p class="about">'+t("teach_t")+'</p>')+'<button class="btn accent" id="sAddH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.palette+t("appearance")+'</h2><p class="about">'+t("appearance_t")+'</p>'+paletteGrid("sPal",appTheme(),false)+'</section>'+
-   '<section class="card"><h2 class="sh">'+ICONS.globe+t("lang")+'</h2>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'<h3>'+t("hij_lbl")+'</h3>'+seg("sHij",[["0",t("hij_off")],["1",t("hij_on")]],ST.profile.hijri?"1":"0")+'<p class="hint">'+t("hij_t")+'</p></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.globe+t("lang")+'</h2>'+seg("sLang",[["ar","العربية"],["en","English"]],L())+'<h3>'+t("week_start")+'</h3>'+seg("sWs",[[6,t("sat")],[0,t("sun")],[1,t("mon")]],WS())+'<p class="hint">'+t("ws_hint")+'</p><h3>'+t("hij_lbl")+'</h3>'+seg("sHij",[["0",t("hij_off")],["1",t("hij_on")]],ST.profile.hijri?"1":"0")+'<p class="hint">'+t("hij_t")+'</p></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.info+t("lock_t")+'</h2><p class="about">'+t("lock_about")+'</p><p class="msg ok" id="lkSt">'+(ST.profile.pin&&ST.profile.pin.h?t("lock_on_pin"):t("lock_on_q"))+'</p><div class="row"><button class="btn" id="lkSet">'+t(ST.profile.pin&&ST.profile.pin.h?"pin_change":"pin_set")+'</button>'+(ST.profile.pin&&ST.profile.pin.h?'<button class="btn" id="lkOff">'+t("pin_remove")+'</button>':'')+'</div><div id="lkBox"></div></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.info+t("bk_title")+'</h2><p class="about">'+t("bk_t")+'</p><div class="row"><button class="btn" id="bkOut">'+t("bk_export")+'</button><button class="btn" id="bkIn">'+t("bk_import")+'</button></div><input type="file" id="bkFile" accept="application/json,.json" hidden><p class="msg" id="bkMsg"></p><div id="bkConf"></div></section>'+
    (hasLocal?'<section class="card"><button class="btn" id="imp">'+t("import_local")+'</button><p class="msg ok" id="impMsg"></p></section>':''))+
    '<section class="card"><h2 class="sh">'+ICONS.user+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><p class="hint">'+t("audio_src")+'</p><p class="hint">'+tanzilLine()+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
   $("sDone").onclick=()=>{go("main");scrollToday()};
-  if($("cdOff"))$("cdOff").onclick=()=>{prefs.child=null;savePrefs();renderSettings()};
+  if($("cdOff"))$("cdOff").onclick=async()=>{const kid=prefs.child&&prefs.child.kid;if(kid)await quick(D.disablePush({kidId:kid}));prefs.child=null;savePrefs();renderSettings()};
   $("nOn").onclick=async()=>{const m=$("nMsg");m.className="msg";try{const r=await D.enablePush(ck?{kidId:ck.id}:{});fillStat();m.className="msg "+(r==="ok"?"ok":"err");m.textContent=t({ok:"notif_ok",denied:"notif_denied",unsupported:"notif_unsupported","ios-home":"notif_ios",demo:"notif_demo"}[r]||"err_generic")}catch(e){m.className="msg err";m.textContent=t("err_generic")}};
   const fillStat=()=>{const sup="Notification" in window&&"serviceWorker" in navigator,perm=sup?Notification.permission:"unsupported",
       ios=/iPhone|iPad|iPod/.test(navigator.userAgent)&&!navigator.standalone,n=((ck?ck.tokens:P.tokens)||[]).length;
@@ -758,8 +763,13 @@ function renderSettings(){
   }
   if($("bkOut")){
     const bm=(txt,cls)=>{$("bkMsg").className="msg "+(cls||"");$("bkMsg").textContent=txt};
-    $("bkOut").onclick=()=>{const ks=kidsList();if(!ks.length){bm(t("bk_none"),"err");return}
-      const b=makeBackup(ks,ST.days),blob=new Blob([JSON.stringify(b,null,1)],{type:"application/json"}),a=document.createElement("a");
+    $("bkOut").onclick=async()=>{const ks=kidsList();if(!ks.length){bm(t("bk_none"),"err");return}
+      $("bkOut").disabled=true;bm(t("loading"));
+      try{await Promise.all(ks.map(k=>D.fetchDays(k.id)))}catch(x){$("bkOut").disabled=false;bm(t("err_generic"),"err");return}
+      $("bkOut").disabled=false;
+      const b=makeBackup(ks,ST.days),text=JSON.stringify(b);
+      const blob=new Blob([text],{type:"application/json"}),a=document.createElement("a");
+      if(blob.size>MAX_FILE_BYTES||b.kids.reduce((n,x)=>n+Object.keys(x.days).length,0)>MAX_TOTAL_DAYS){bm(t("bk_big"),"err");return}   // a file the restore would refuse is not offered
       a.href=URL.createObjectURL(blob);a.download="sahibi-backup-"+today()+".json";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
       bm(t("bk_saved",b.kids.length),"ok")};
     $("bkIn").onclick=()=>$("bkFile").click();
@@ -767,15 +777,15 @@ function renderSettings(){
       if(f.size>MAX_FILE_BYTES){bm(t("bk_big"),"err");return}
       let r;try{r=parseBackup(await f.text())}catch(x){r={ok:false,err:"bad"}}
       if(!r.ok){bm(t(r.err==="big"?"bk_big":"bk_bad"),"err");return}
-      const nd=r.kids.reduce((a,x)=>a+Object.keys(x.days).length,0);
-      $("bkConf").innerHTML='<p class="about">'+t("bk_summary",r.kids.length,r.kids.map(x=>esc(x.kid.name)).join("، "),nd)+(r.dropped?' '+t("bk_dropped",r.dropped):'')+'</p><div class="row"><button class="btn primary" id="bkGo">'+t("bk_go")+'</button><button class="btn" id="bkNo">'+t("cancel")+'</button></div>';
+      const nd=r.kids.reduce((a,x)=>a+Object.keys(x.days).length,0),plan=r.kids.map((x,i)=>({id:uid("k"),x,i}));   // ids fixed here: pressing the button again after a failure rewrites the same documents
+      $("bkConf").innerHTML='<p class="about">'+t("bk_summary",r.kids.length,r.kids.map(x=>esc(x.kid.name)).join("، "),nd)+(r.dropped?' '+t("bk_dropped",r.dropped):'')+(r.droppedDays?' '+t("bk_dropped_days",r.droppedDays):'')+'</p><div class="row"><button class="btn primary" id="bkGo">'+t("bk_go")+'</button><button class="btn" id="bkNo">'+t("cancel")+'</button></div>';
       $("bkNo").onclick=()=>{$("bkConf").innerHTML=""};
       $("bkGo").onclick=async()=>{$("bkGo").disabled=true;bm(t("loading"));
-        try{let n=0;for(const x of r.kids){const id=uid("k");await D.saveKid(Object.assign({id,created:Date.now()+n},x.kid,{halaqaId:null,teacherUid:null}));
-            const ds=Object.keys(x.days);for(let i=0;i<ds.length;i+=20)await Promise.all(ds.slice(i,i+20).map(d=>D.setDay(id,d,x.days[d])));n++}
+        try{for(const p of plan){await D.saveKid(Object.assign({id:p.id,created:Date.now()+p.i},p.x.kid,{halaqaId:null,teacherUid:null}));
+            const ds=Object.keys(p.x.days);for(let i=0;i<ds.length;i+=20)await Promise.all(ds.slice(i,i+20).map(d=>D.setDay(p.id,d,p.x.days[d],true)))}
           $("bkConf").innerHTML="";bm(t("bk_done",r.kids.length,nd),"ok")}catch(x){$("bkGo").disabled=false;bm(t("err_generic"),"err")}}};
   }
-  $("sOut").onclick=async()=>{gateOk=false;nav={view:"main"};await D.signOut()};
+  $("sOut").onclick=async()=>{gateOk=false;nav={view:"main"};await quick(D.disablePush({}));await D.signOut()};
   let armed=false;if($("sDel"))$("sDel").onclick=async()=>{if(!armed){armed=true;$("sDel").className="btn warn";$("sDel").textContent=t("delacc2");return}
     try{await D.deleteAccount();gateOk=false;nav={view:"main"};render()}catch(e){$("sMsg").textContent=I[L()][e.code]?t(e.code):t("err_generic")}};
 }
@@ -823,6 +833,7 @@ function renderEdit(){
    '<section class="card"><h3>'+t("halaqa")+'</h3>'+(h?'<p class="about">'+t("joined",esc(h.name))+(h.teacherName?' · '+t("teacher_of",esc(h.teacherName)):'')+'</p><p class="about">'+(tp?t("plan_by_teacher",esc(h.name)):t("plan_by_parent"))+'</p><button type="button" class="btn" id="hLeave" style="align-self:flex-start">'+t("leave")+'</button>':
      jn&&jn.status==="pending"?'<p class="about">'+t("join_pending",esc(jn.name))+'</p><button type="button" class="btn" id="hCancelJoin" style="align-self:flex-start">'+t("join_cancel")+'</button>':
      jn&&jn.status==="rejected"?'<p class="msg err">'+t("join_rejected",esc(jn.name))+'</p><button type="button" class="btn" id="hCancelJoin" style="align-self:flex-start">'+t("close")+'</button>':
+     jn&&jn.status==="expired"?'<p class="msg err">'+t("join_expired",esc(jn.name))+'</p><button type="button" class="btn" id="hCancelJoin" style="align-self:flex-start">'+t("close")+'</button>':
      '<div class="row"><input id="hCodeIn" class="codein" dir="ltr" maxlength="8" placeholder="'+t("halaqa_code")+'" autocomplete="off" value="'+esc(d._code||"")+'"><button type="button" class="btn primary" id="hJoin">'+t("join")+'</button></div>')+'<p class="msg" id="hMsg"></p></section>'+
    (tp?'':planSection(d))+
    (d._new?'':coParentCard(live,me))+
@@ -845,11 +856,11 @@ function renderEdit(){
   const hm=(m,ok)=>{$("hMsg").className="msg "+(ok?"ok":"err");$("hMsg").textContent=m};
   if($("hJoin"))$("hJoin").onclick=async()=>{const code=$("hCodeIn").value.trim().toUpperCase();if(!code)return;
     if(d._new||!ST.kids[d.id]){if(!d.name.trim()){hm(t("name_req"));return}await saveDraft(true)}
-    try{const r=await D.requestJoin(d.id,code);if(r.err){hm(t("notfound"));return}draft=Object.assign(JSON.parse(JSON.stringify(ST.kids[d.id]||d)),{_new:false});renderEdit();hm(t("join_sent",esc(r.name)),true)}catch(e){hm(t("err_generic"))}};
-  if($("hCancelJoin"))$("hCancelJoin").onclick=async()=>{await D.cancelJoin(d.id);renderEdit()};
+    try{const r=await D.requestJoin(d.id,code);if(r.err){hm(t("notfound"));return}draft=Object.assign(JSON.parse(JSON.stringify(ST.kids[d.id]||d)),{_new:false});renderEdit();hm(t("join_sent",esc(r.name)),true)}catch(e){hm(t("join_err"))}};
+  if($("hCancelJoin"))$("hCancelJoin").onclick=async()=>{try{await D.cancelJoin(d.id);renderEdit()}catch(e){hm(t("err_generic"))}};
   bindCoParent(live,me,renderEdit);
-  if($("hLeave"))$("hLeave").onclick=async()=>{await D.leaveHalaqa(d.id);d.halaqaId=null;d.teacherUid=null;renderEdit()};
-  if($("cdSet"))$("cdSet").onclick=()=>{prefs.child={uid:ST.user.uid,kid:d.id};savePrefs();gateOk=false;go("main")};
+  if($("hLeave"))$("hLeave").onclick=async()=>{try{await D.leaveHalaqa(d.id);d.halaqaId=null;d.teacherUid=null;renderEdit()}catch(e){hm(t("err_generic"))}};
+  if($("cdSet"))$("cdSet").onclick=()=>{const before=prefs.child&&prefs.child.kid;(async()=>{if(before&&before!==d.id)await quick(D.disablePush({kidId:before}));prefs.child={uid:ST.user.uid,kid:d.id};savePrefs();gateOk=false;go("main")})()};
   $("eSave").onclick=async()=>{const ok=await saveDraft(false);if(ok){prefs.cur=d.id;savePrefs();draft=null;go("main");scrollToday()}};
   let armed=false;if($("eDel"))$("eDel").onclick=async()=>{if(!armed){armed=true;$("eDel").className="btn warn big";$("eDel").textContent=t("del2");return}
     await D.deleteKid(d.id);if(prefs.child&&prefs.child.kid===d.id)prefs.child=null;if(prefs.cur===d.id)prefs.cur=null;savePrefs();draft=null;go("settings")};
@@ -885,7 +896,7 @@ async function saveDraft(quiet){
 }
 
 /* ================= halaqa editor ================= */
-function newCode(){const A="ABCDEFGHJKMNPQRSTUVWXYZ23456789";let s="";for(let i=0;i<6;i++)s+=A[Math.floor(Math.random()*A.length)];return s}
+function newCode(){const A="ABCDEFGHJKMNPQRSTUVWXYZ23456789";let s="";for(let i=0;i<8;i++)s+=A[Math.floor(Math.random()*A.length)];return s}
 function openHEdit(id){
   const h=id?ST.halaqas[id]:null;
   draft=h?JSON.parse(JSON.stringify(h)):{id:"h"+Array.from(crypto.getRandomValues(new Uint8Array(12)),x=>x.toString(36).padStart(2,"0")).join(""),name:"",teacherName:ST.profile.name||"",plan:null,_new:true};
@@ -909,9 +920,14 @@ function renderHEdit(){
   $("eSave").onclick=async()=>{d.name=d.name.trim();if(!d.name){$("eMsg").textContent=t("name_req");return}
     if(d._usePlan&&!planHas(d._p)){$("eMsg").textContent=t("surah_req");return}
     $("eSave").disabled=true;
-    try{let code=d.code;if(!code){for(let i=0;i<5;i++){code=newCode();if(!(await D.codeTaken(code)))break}}
-      const prev=d.plan,np=d._usePlan?{surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,...planStamp(prev,d._p,today(),weekOf(today())),weekStart:WS()}:null;
-      await D.saveHalaqa({id:d.id,name:d.name,teacherName:(d.teacherName||"").trim(),code,plan:np,created:d.created||Date.now()});
+    try{const prev=d.plan,np=d._usePlan?{surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,...planStamp(prev,d._p,today(),weekOf(today())),weekStart:WS()}:null;
+      const base={id:d.id,name:d.name,teacherName:(d.teacherName||"").trim(),plan:np,created:d.created||Date.now()};
+      let code=d.code,tries=0;
+      for(;;){
+        if(!code){for(let i=0;i<5;i++){code=newCode();if(!(await D.codeTaken(code)))break}}
+        try{await D.saveHalaqa(Object.assign({code},base));break}
+        catch(e){if(e&&e.code==="sahibi/code-taken"&&++tries<5){code=null;continue}throw e}
+      }
       if(!ST.profile.name&&d.teacherName)D.saveProfile({name:d.teacherName.trim()});
       prefs.mode="teach";savePrefs();const id=d.id;draft=null;hDate=null;go("halaqa",{hid:id});
     }catch(e){$("eSave").disabled=false;$("eMsg").textContent=t("err_generic")}};
@@ -1026,9 +1042,6 @@ function openText(items){
 }
 
 /* ================= listening (alquran.cloud / Islamic Network CDN) ================= */
-const RECITERS=[["ar.husary",128,"rc_husary"],["ar.alafasy",128,"rc_alafasy"],["ar.minshawi",128,"rc_minshawi"],["ar.abdulbasitmurattal",192,"rc_abdulbasit"]];
-const AYAH0=(()=>{const a=[0];for(let i=0;i<114;i++)a.push(a[i]+S[i][2]);return a})(); // global number of ayah 1 of surah n = AYAH0[n-1]+1
-const ayahUrl=(rc,s,a)=>{const R=RECITERS.find(x=>x[0]===rc)||RECITERS[0];return "https://cdn.islamic.network/quran/audio/"+R[1]+"/"+R[0]+"/"+(AYAH0[s-1]+a)+".mp3"};
 const player={el:null,queue:[],i:0,rep:0,on:false,audio:null,pre:null,seq:0};
 function openListen(items){
   const pr=prefs.audio||{rc:"ar.husary",mode:"ayah",rep:3};prefs.audio=pr;
@@ -1041,8 +1054,9 @@ function openListen(items){
    '<p class="qline" id="lText" aria-live="off"></p>'+
    '<div class="field"><button type="button" class="btn" id="lWarm">'+t("warm_btn")+'</button><span class="hint" id="lWarmMsg">'+t("warm_hint")+'</span></div>'+
    '<p class="now" id="lNow" aria-live="polite"></p><div class="row"><button class="btn accent big" id="lPlay">'+t("play")+'</button><button class="btn" id="lStop">'+t("stop")+'</button></div>'+
-   '<p class="hint">'+t("audio_src")+'</p></div>';
-  document.body.appendChild(ov);player.el=ov;loadQuran().catch(()=>{});
+   '<p class="hint">'+t("audio_src")+'</p><p class="hint">'+tanzilLine()+'</p></div>';
+  document.body.appendChild(ov);player.el=ov;
+  loadQuran().then(()=>{const q=player.queue[player.i];if(player.on&&q&&$("lText"))$("lText").textContent=ayahShown(q.s,q.a).rest}).catch(()=>{});
   const segBind=(id,f)=>$(id).querySelectorAll("button").forEach(b=>b.onclick=()=>{$(id).querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));f(b.dataset.v)});
   $("lRc").onchange=e=>{pr.rc=e.target.value;savePrefs();if(player.on)playCur()};
   segBind("lMode",v=>{pr.mode=v;savePrefs();$("lRepF").hidden=v!=="ayah"});
@@ -1052,9 +1066,9 @@ function openListen(items){
   const start=()=>{if(!player.queue.length)build(0);player.on=true;playCur()};
   $("lPlay").onclick=()=>{const a=player.audio;if(player.on&&a&&!a.paused){a.pause();$("lPlay").textContent=t("play");return}if(player.on&&a&&a.paused&&a.src){a.play().catch(e=>{if(!e||e.name!=="AbortError")err()});$("lPlay").textContent=t("pause");return}build(0);start()};
   $("lStop").onclick=()=>stopListen(false);
-  $("lClose").onclick=()=>{warmRun++;stopListen(true)};
+  $("lClose").onclick=()=>{cancelWarm();stopListen(true)};
   $("lWarm").onclick=async()=>{
-    if(warming){warmRun++;return}
+    if(warming){cancelWarm();return}
     warming=true;$("lWarm").textContent=t("warm_cancel");
     const msg=$("lWarmMsg"),r=await prewarmAudio(items,prefs.audio.rc,(ok,fail,total)=>{if($("lWarmMsg"))$("lWarmMsg").textContent=t("warm_prog",ok+fail,total)});
     warming=false;if(!$("lWarm"))return;$("lWarm").textContent=t("warm_btn");
@@ -1065,29 +1079,32 @@ function openListen(items){
 /* Best effort: let the browser download today's ayat now so they play from its HTTP cache later.
    The audio CDN sends no CORS headers, so the Cache API cannot be used; an Audio element is what fills the cache
    (a fetch() in no-cors mode was measured not to help). The browser may still evict the files. */
-let warmRun=0,warming=false;
+let warmRun=0,warming=false;const warmFin=new Set();
+function cancelWarm(){warmRun++;[...warmFin].forEach(f=>f(null))}   // null: stopped by the user, counted neither as done nor as failed
 async function prewarmAudio(items,rc,on){
   const run=++warmRun,list=[];
   items.forEach(it=>{for(let a=it[1];a<=it[2];a++)list.push([it[0],a])});
-  let ok=0,fail=0,i=0;const keep=[];
+  let ok=0,fail=0,i=0;
   const one=([s,a])=>new Promise(res=>{
-    const el=new Audio();el.preload="auto";keep.push(el);let done=false,tm=null;
-    const fin=g=>{if(done)return;done=true;clearTimeout(tm);el.onprogress=el.oncanplaythrough=el.onloadedmetadata=el.onerror=null;el.removeAttribute("src");el.load();res(g)};
-    const chk=()=>{try{const b=el.buffered;if(isFinite(el.duration)&&b.length&&b.end(b.length-1)>=el.duration-0.3)fin(true)}catch(e){}};
+    const el=new Audio();el.preload="auto";let done=false,tm=null;
+    const fin=g=>{if(done)return;done=true;clearTimeout(tm);warmFin.delete(fin);el.onprogress=el.oncanplaythrough=el.onloadedmetadata=el.onerror=null;el.removeAttribute("src");el.load();res(g)};
+    warmFin.add(fin);
+    const arm=()=>{clearTimeout(tm);tm=setTimeout(()=>fin(false),20000)};   // fails after 20 s without progress, not 30 s in all: a long ayah on a slow line keeps going while it moves
+    const chk=()=>{arm();try{const b=el.buffered;if(isFinite(el.duration)&&b.length&&b.end(b.length-1)>=el.duration-0.3)fin(true)}catch(e){}};
     el.onprogress=chk;el.oncanplaythrough=chk;el.onloadedmetadata=chk;el.onerror=()=>fin(false);
-    tm=setTimeout(()=>fin(false),30000);
+    arm();
     el.src=ayahUrl(rc,s,a);
   });
-  const worker=async()=>{while(i<list.length&&run===warmRun){const x=list[i++];(await one(x))?ok++:fail++;on(ok,fail,list.length)}};
+  const worker=async()=>{while(i<list.length&&run===warmRun){const x=list[i++],g=await one(x);if(g===true)ok++;else if(g===false)fail++;on(ok,fail,list.length)}};
   await Promise.all([worker(),worker()]);
   return{ok,fail,total:list.length,cancelled:run!==warmRun};
 }
-function playCur(){
+function playCur(again){   // again: the same ayah once more (restart the file; a new source is only set for another ayah)
   const q=player.queue[player.i];if(!q){stopListen(false);return}
   if(!player.audio){player.audio=new Audio();player.audio.preload="auto";
-    player.audio.onended=()=>{const pr=prefs.audio;player.rep++;if(pr.mode!=="ayah"||player.rep>=pr.rep){player.rep=0;player.i++}playCur()};
+    player.audio.onended=()=>{const pr=prefs.audio;player.rep++;const next=pr.mode!=="ayah"||player.rep>=pr.rep;if(next){player.rep=0;player.i++}playCur(!next)};
     player.audio.onerror=()=>player.on&&player.err&&player.err()}
-  const seq=++player.seq;player.audio.src=ayahUrl(prefs.audio.rc,q.s,q.a);player.audio.play().then(()=>{if($("lPlay"))$("lPlay").textContent=t("pause")}).catch(e=>{if(seq!==player.seq||(e&&e.name==="AbortError"))return;player.err&&player.err()});
+  const seq=++player.seq;if(again&&player.audio.src)player.audio.currentTime=0;else player.audio.src=ayahUrl(prefs.audio.rc,q.s,q.a);player.audio.play().then(()=>{if($("lPlay"))$("lPlay").textContent=t("pause")}).catch(e=>{if(seq!==player.seq||(e&&e.name==="AbortError"))return;player.err&&player.err()});
   if($("lText"))$("lText").textContent=ayahShown(q.s,q.a).rest;
   if($("lNow"))$("lNow").textContent=t("now_ayah",sName(q.s),q.a)+(prefs.audio.mode==="ayah"&&prefs.audio.rep>1?' · '+(player.rep+1)+'/'+prefs.audio.rep:'');
   if(player.el)player.el.querySelectorAll("#lItems .item").forEach(b=>b.classList.toggle("on",+b.dataset.j===q.j));

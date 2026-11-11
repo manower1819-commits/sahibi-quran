@@ -14,6 +14,13 @@ export function failState(st, now, max = 5, waitMs = 60000) {
   const n = ((st && st.n) || 0) + 1;
   return n >= max ? {n: 0, until: now + waitMs} : {n, until: (st && st.until) || 0};
 }
+/* a lockout state read back from storage: only a plausible one is kept, and the wait is never longer than waitMs from now (a wrong clock must not lock the settings for good) */
+export function parseFail(raw, now, max = 5, waitMs = 60000) {
+  if (!raw || typeof raw !== "object") return null;
+  const n = Number(raw.n), until = Number(raw.until);
+  if (!Number.isInteger(n) || n < 0 || n >= max || !Number.isFinite(until) || until < 0) return null;
+  return {n, until: Math.min(until, now + waitMs)};
+}
 export const waitLeft = (st, now) => Math.max(0, Math.ceil((((st && st.until) || 0) - now) / 1000));
 /* the settings lock closes after this long without any touch or key */
 export const LOCK_MS = 5 * 60 * 1000;

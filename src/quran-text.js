@@ -28,3 +28,8 @@ export function splitBasmala(surah, ayah, text, basmalaText) {
   if (w.length <= b.length || !b.every((x, i) => skel(w[i]) === skel(x))) return {basmala: null, rest: text};
   return {basmala: w.slice(0, b.length).join(" "), rest: w.slice(b.length).join(" ")};
 }
+
+/* Audio: islamic.network serves one file per ayah, numbered across the whole Quran (the same Hafs numbering as the text above). */
+export const RECITERS=[["ar.husary",128,"rc_husary"],["ar.alafasy",128,"rc_alafasy"],["ar.minshawi",128,"rc_minshawi"],["ar.abdulbasitmurattal",192,"rc_abdulbasit"]];
+export const AYAH0=(()=>{const a=[0];for(let i=0;i<114;i++)a.push(a[i]+S[i][2]);return a})(); // global number of ayah 1 of surah n = AYAH0[n-1]+1
+export const ayahUrl=(rc,s,a)=>{const R=RECITERS.find(x=>x[0]===rc)||RECITERS[0];return "https://cdn.islamic.network/quran/audio/"+R[1]+"/"+R[0]+"/"+(AYAH0[s-1]+a)+".mp3"};
