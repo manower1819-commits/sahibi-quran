@@ -16,7 +16,7 @@ const TXT={
   ar:{rem_t:"تذكير بالورد",rem_b:"ورد {0} لليوم لم يُسجَّل بعد",sum_t:"ملخص اليوم: {0}",sum_b:"أتمّ {0} من {1}. لم يُتمّ: {2}",sum_all:"أتمّ الجميع ورد اليوم، ما شاء الله",n_t:"ملاحظة جديدة من المعلم",n_b:"كتب المعلم ملاحظة على ورد {0}",t_t:"تذكير من المعلم",t_b:"لا تنسَ ورد اليوم يا {0}",t_bf:"لا تنسَي ورد اليوم يا {0}",w_t:"تقرير الأسبوع جاهز",w_line:"{0}: {1}/7 أيام · {2} نجمة · {3} خطأ",hw_t:"تقرير الأسبوع: {0}",hw_b:"أتمّ الأسبوع {0} من {1} · متوسط نجوم البيت {2}"},
   en:{rem_t:"Wird reminder",rem_b:"{0}'s wird for today isn't logged yet",sum_t:"Today's summary: {0}",sum_b:"{0} of {1} done. Not yet: {2}",sum_all:"Everyone finished today's wird. Masha'Allah",n_t:"New note from your teacher",n_b:"Your teacher wrote a note on {0}'s wird",t_t:"Reminder from your teacher",t_b:"Don't forget today's wird, {0}",t_bf:"Don't forget today's wird, {0}",w_t:"Your weekly report is ready",w_line:"{0}: {1}/7 days · {2} stars · {3} mistakes",hw_t:"Weekly report: {0}",hw_b:"{0} of {1} finished the week · average home stars {2}"}
 };
-const tx=(lang,k,...a)=>{let s=(TXT[lang]||TXT.ar)[k];a.forEach((v,i)=>s=s.split("{"+i+"}").join(v));return s};
+const tx=(lang,k,...a)=>{let s=(Object.prototype.hasOwnProperty.call(TXT,lang)?TXT[lang]:TXT.ar)[k];a.forEach((v,i)=>s=s.split("{"+i+"}").join(v));return s};
 const local=off=>{const d=new Date(Date.now()+(off||0)*60000);return{date:d.toISOString().slice(0,10),min:d.getUTCHours()*60+d.getUTCMinutes()}};
 const hm=s=>{const [h,m]=String(s).split(":").map(Number);return h*60+m};
 const due=(at,off,last)=>{if(!at)return null;const L=local(off),late=L.min-hm(at);return late>=0&&late<=LATE_MAX&&last!==L.date?L.date:null};
@@ -33,7 +33,7 @@ async function kidsOfParent(uid){
   const m=new Map();[...a.docs,...b.docs].forEach(d=>m.set(d.id,d));return[...m.values()];
 }
 async function send(targets,title,body,link){
-  const all=[];targets.forEach(x=>(x.tokens||[]).forEach(tk=>all.push({ref:x.ref,tk})));
+  const all=[];targets.forEach(x=>(Array.isArray(x.tokens)?x.tokens:[]).forEach(tk=>{if(typeof tk==="string"&&tk)all.push({ref:x.ref,tk})}));
   const uniq=[...new Map(all.map(x=>[x.tk,x])).values()];
   if(!uniq.length)return 0;
   const res=await admin.messaging().sendEach(uniq.map(x=>({token:x.tk,notification:{title,body},data:{link:link||"/"},webpush:{fcmOptions:{link:BASE+(link||"/")},notification:{icon:"/icons/icon-192.png",dir:"auto"}}})));
@@ -43,10 +43,13 @@ async function send(targets,title,body,link){
 }
 
 async function main(){
-  let n=0;
+  let n=0,skipped=0;
+  // one account or queue entry with bad values (a non-numeric offset, tokens that are not a list...) must not stop everyone else's reminders;
+  // log only what and which id, never the values or the tokens
+  const skip=(what,id,e)=>{skipped++;console.error("skipped",what,id,(e&&(e.code||e.name))||"error")};
   // 1) parent reminders
   const parents=await db.collection("users").where("remindAt","!=",null).get();
-  for(const p of parents.docs){
+  for(const p of parents.docs){try{
     const u=p.data(),d=due(u.remindAt,u.offset,u.lastRemind);if(!d)continue;
     const lang=u.lang||"ar",kids=await kidsOfParent(p.id);
     for(const k of kids){
@@ -55,10 +58,10 @@ async function main(){
       n+=await send([{ref:p.ref,tokens:u.tokens}].concat(p.id===kd.parentUid?[{ref:k.ref,tokens:kd.tokens}]:[]),tx(lang,"rem_t"),tx(lang,"rem_b",kd.name||""));
     }
     await p.ref.update({lastRemind:d});
-  }
+  }catch(e){skip("parent reminder",p.id,e)}}
   // 2) teacher summaries
   const teachers=await db.collection("users").where("summaryAt","!=",null).get();
-  for(const t of teachers.docs){
+  for(const t of teachers.docs){try{
     const u=t.data(),d=due(u.summaryAt,u.offset,u.lastSummary);if(!d)continue;
     const lang=u.lang||"ar",hs=await db.collection("halaqas").where("teacherUid","==",t.id).get();
     for(const h of hs.docs){
@@ -70,7 +73,7 @@ async function main(){
       n+=await send([{ref:t.ref,tokens:u.tokens}],tx(lang,"sum_t",h.data().name||""),body);
     }
     await t.ref.update({lastSummary:d});
-  }
+  }catch(e){skip("teacher summary",t.id,e)}}
   // 3) teacher "Remind" taps
   const q=await db.collection("reminders").limit(500).get();
   for(const r of q.docs){
@@ -85,17 +88,17 @@ async function main(){
         for(const pid of uids){const pref=db.collection("users").doc(pid),p=await pref.get(),pu=p.exists?p.data():{};if(pid===kd.parentUid)lang=pu.lang||lang;targets.push({ref:pref,tokens:pu.tokens})}
         n+=await send(targets,tx(lang,x.kind==="note"?"n_t":"t_t"),x.kind==="note"?tx(lang,"n_b",kd.name||""):tx(lang,kd.gender==="f"?"t_bf":"t_b",kd.name||""));
       }
-    }finally{await r.ref.delete()}
+    }catch(e){skip("queued reminder",r.id,e)}finally{await r.ref.delete().catch(e=>skip("queue delete",r.id,e))}
   }
   // 4) weekly reports (first day of the new week)
-  for(const p of parents.docs){
+  for(const p of parents.docs){try{
     const u=p.data(),d=due(u.remindAt,u.offset,u.lastWeekly);if(!d||dow(d)!==wsOf(u))continue;
     const lang=u.lang||"ar",a=addD(d,-7),b=addD(d,-1),kids=await kidsOfParent(p.id),lines=[];
     for(const k of kids){const w=sumWeek(await weekDays(k.ref,a,b));lines.push(tx(lang,"w_line",k.data().name||"",w.done,w.home,w.mist))}
     if(lines.length)n+=await send([{ref:p.ref,tokens:u.tokens}],tx(lang,"w_t"),lines.join("\n"),"/?report=1");
     await p.ref.update({lastWeekly:d});
-  }
-  for(const t of teachers.docs){
+  }catch(e){skip("parent weekly",p.id,e)}}
+  for(const t of teachers.docs){try{
     const u=t.data(),d=due(u.summaryAt,u.offset,u.lastHWeekly);if(!d||dow(d)!==wsOf(u))continue;
     const lang=u.lang||"ar",a=addD(d,-7),b=addD(d,-1),hs=await db.collection("halaqas").where("teacherUid","==",t.id).get();
     for(const h of hs.docs){
@@ -104,8 +107,8 @@ async function main(){
       n+=await send([{ref:t.ref,tokens:u.tokens}],tx(lang,"hw_t",h.data().name||""),tx(lang,"hw_b",full,st.size,(home/st.size).toFixed(1)),"/?hreport="+h.id);
     }
     await t.ref.update({lastHWeekly:d});
-  }
-  console.log("notifications sent:",n);
+  }catch(e){skip("teacher weekly",t.id,e)}}
+  console.log("notifications sent:",n,"skipped:",skipped);
 }
 module.exports={main,due,local,sumWeek,addD,dow,wsOf,kidsOfParent};
 if(require.main===module)main().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});
