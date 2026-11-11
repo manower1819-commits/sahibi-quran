@@ -45,7 +45,9 @@ service cloud.firestore {
 
       // Join requests: a parent asks, only the class's teacher decides.
       match /requests/{kidId} {
-        allow read: if signedIn() && (resource == null || halaqa(hid).teacherUid == me() || resource.data.parentUid == me());
+        // read and delete: the class's teacher, the parent who made the request, or any parent of that child (a co-parent sees and cancels the owner's request, and the owner a co-parent's)
+        allow read: if signedIn() && (resource == null || halaqa(hid).teacherUid == me() || resource.data.parentUid == me()
+                                      || isParentOf(get(/databases/$(database)/documents/kids/$(kidId)).data));
         allow create: if signedIn()
                       && request.resource.data.keys().hasOnly(['kidId', 'parentUid', 'teacherUid', 'kidName', 'status', 'at'])
                       && request.resource.data.kidId == kidId
@@ -61,7 +63,8 @@ service cloud.firestore {
                       && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedAt'])
                       && request.resource.data.decidedAt == request.time
                       && request.resource.data.status in ['approved', 'rejected'];
-        allow delete: if signedIn() && (halaqa(hid).teacherUid == me() || resource.data.parentUid == me());
+        allow delete: if signedIn() && (halaqa(hid).teacherUid == me() || resource.data.parentUid == me()
+                                        || isParentOf(get(/databases/$(database)/documents/kids/$(kidId)).data));
       }
     }
 
