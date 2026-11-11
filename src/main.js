@@ -1025,7 +1025,7 @@ function openText(items){
 const RECITERS=[["ar.husary",128,"rc_husary"],["ar.alafasy",128,"rc_alafasy"],["ar.minshawi",128,"rc_minshawi"],["ar.abdulbasitmurattal",192,"rc_abdulbasit"]];
 const AYAH0=(()=>{const a=[0];for(let i=0;i<114;i++)a.push(a[i]+S[i][2]);return a})(); // global number of ayah 1 of surah n = AYAH0[n-1]+1
 const ayahUrl=(rc,s,a)=>{const R=RECITERS.find(x=>x[0]===rc)||RECITERS[0];return "https://cdn.islamic.network/quran/audio/"+R[1]+"/"+R[0]+"/"+(AYAH0[s-1]+a)+".mp3"};
-const player={el:null,queue:[],i:0,rep:0,on:false,audio:null};
+const player={el:null,queue:[],i:0,rep:0,on:false,audio:null,pre:null,seq:0};
 function openListen(items){
   const pr=prefs.audio||{rc:"ar.husary",mode:"ayah",rep:3};prefs.audio=pr;
   const ov=document.createElement("div");ov.className="sheet";ov.setAttribute("role","dialog");ov.setAttribute("aria-modal","true");ov.setAttribute("aria-label",t("listen_t"));
@@ -1046,7 +1046,7 @@ function openListen(items){
   const build=from=>{player.queue=[];items.forEach((it,j)=>{if(j<from)return;for(let a=it[1];a<=it[2];a++)player.queue.push({s:it[0],a,j})});player.i=0;player.rep=0};
   ov.querySelectorAll("#lItems .item").forEach(b=>b.onclick=()=>{build(+b.dataset.j);start()});
   const start=()=>{if(!player.queue.length)build(0);player.on=true;playCur()};
-  $("lPlay").onclick=()=>{const a=player.audio;if(player.on&&a&&!a.paused){a.pause();$("lPlay").textContent=t("play");return}if(player.on&&a&&a.paused&&a.src){a.play().catch(err);$("lPlay").textContent=t("pause");return}build(0);start()};
+  $("lPlay").onclick=()=>{const a=player.audio;if(player.on&&a&&!a.paused){a.pause();$("lPlay").textContent=t("play");return}if(player.on&&a&&a.paused&&a.src){a.play().catch(e=>{if(!e||e.name!=="AbortError")err()});$("lPlay").textContent=t("pause");return}build(0);start()};
   $("lStop").onclick=()=>stopListen(false);
   $("lClose").onclick=()=>{warmRun++;stopListen(true)};
   $("lWarm").onclick=async()=>{
@@ -1082,15 +1082,15 @@ function playCur(){
   const q=player.queue[player.i];if(!q){stopListen(false);return}
   if(!player.audio){player.audio=new Audio();player.audio.preload="auto";
     player.audio.onended=()=>{const pr=prefs.audio;player.rep++;if(pr.mode!=="ayah"||player.rep>=pr.rep){player.rep=0;player.i++}playCur()};
-    player.audio.onerror=()=>player.err&&player.err()}
-  player.audio.src=ayahUrl(prefs.audio.rc,q.s,q.a);player.audio.play().then(()=>{if($("lPlay"))$("lPlay").textContent=t("pause")}).catch(()=>player.err&&player.err());
+    player.audio.onerror=()=>player.on&&player.err&&player.err()}
+  const seq=++player.seq;player.audio.src=ayahUrl(prefs.audio.rc,q.s,q.a);player.audio.play().then(()=>{if($("lPlay"))$("lPlay").textContent=t("pause")}).catch(e=>{if(seq!==player.seq||(e&&e.name==="AbortError"))return;player.err&&player.err()});
   if($("lText"))$("lText").textContent=ayahShown(q.s,q.a).rest;
   if($("lNow"))$("lNow").textContent=t("now_ayah",sName(q.s),q.a)+(prefs.audio.mode==="ayah"&&prefs.audio.rep>1?' · '+(player.rep+1)+'/'+prefs.audio.rep:'');
   if(player.el)player.el.querySelectorAll("#lItems .item").forEach(b=>b.classList.toggle("on",+b.dataset.j===q.j));
-  const nx=player.queue[player.i+1];if(nx){const pre=new Audio();pre.preload="auto";pre.src=ayahUrl(prefs.audio.rc,nx.s,nx.a)}
+  const nx=player.queue[player.i+1];if(nx){const u=ayahUrl(prefs.audio.rc,nx.s,nx.a);if(!player.pre){player.pre=new Audio();player.pre.preload="auto"}if(player.pre.src!==u)player.pre.src=u}
 }
 function stopListen(close){
-  player.on=false;player.queue=[];player.i=0;player.rep=0;if(player.audio){player.audio.pause();player.audio.removeAttribute("src");player.audio.load()}
+  player.seq++;player.on=false;player.queue=[];player.i=0;player.rep=0;if(player.audio){player.audio.pause();player.audio.removeAttribute("src");player.audio.load()}if(player.pre){player.pre.removeAttribute("src");player.pre.load()}
   if($("lPlay"))$("lPlay").textContent=t("play");if($("lNow"))$("lNow").textContent="";if($("lText"))$("lText").textContent="";
   if(player.el)player.el.querySelectorAll("#lItems .item").forEach(b=>b.classList.remove("on"));
   if(close&&player.el){player.el.remove();player.el=null}

@@ -1,6 +1,8 @@
 /* JSON backup of a parent's children and their daily records (no DOM, no network, unit-tested in test/backup.test.js).
    Export keeps only what the family owns; import treats the file as untrusted input and rebuilds every field. */
 import {S} from "./surahs.js";
+import {THEME_ORDER} from "./themes.js";
+import {PALETTE_ORDER} from "./palettes.js";
 
 export const BACKUP_APP = "sahibi-quran";
 export const BACKUP_VERSION = 1;
@@ -27,14 +29,14 @@ export function cleanKid(o) {
   const surahs = [...new Set((Array.isArray(o.surahs) ? o.surahs : []).map(x => int(x, 1, 114)).filter(x => x != null))].sort((a, b) => a - b);
   const ranges = (Array.isArray(o.ranges) ? o.ranges : []).map(aySpan).filter(Boolean);
   const k = {
-    name, gender: o.gender === "f" ? "f" : "m", theme: str(o.theme, 20) || "space", surahs, ranges,
+    name, gender: o.gender === "f" ? "f" : "m", theme: THEME_ORDER.includes(o.theme) ? o.theme : "space", surahs, ranges,
     cycle: [1, 2, 3, 4, 6, 8, 12].includes(Number(o.cycle)) ? Number(o.cycle) : 1,
     light: int(o.light, -1, 6) == null ? 5 : int(o.light, -1, 6),
     weekStart: [0, 1, 6].includes(Number(o.weekStart)) ? Number(o.weekStart) : 6,
     self: o.self === true, look: int(o.look, 0, 50) || 0, skin: int(o.skin, 0, 20) == null ? 1 : int(o.skin, 0, 20),
   };
   if (Number(o.algo) === 2) { k.algo = 2; k.light = -1; }
-  if (str(o.palette, 20)) k.palette = str(o.palette, 20);
+  if (PALETTE_ORDER.includes(o.palette)) k.palette = o.palette;
   if (int(o.age, 3, 99) != null) k.age = int(o.age, 3, 99);
   if (["kids", "teens", "adults"].includes(o.mode)) k.mode = o.mode;
   if (validDate(o.start)) k.start = o.start;
