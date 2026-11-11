@@ -1,0 +1,2 @@
+# the bundled Quran text is verified by its checksum (test/quran-text.test.js): never convert its line endings
+public/quran-uthmani.txt -text
