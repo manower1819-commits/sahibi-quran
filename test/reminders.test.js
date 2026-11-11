@@ -7,7 +7,7 @@ import Module from "node:module";
 const NOW = Date.UTC(2026, 10, 10, 12, 0, 0); // a Tuesday, 12:00 UTC
 
 function makeAdmin(store) {
-  const ID = {id: true}, sent = [];
+  const ID = {id: true}, sent = [], messages = [];
   const fits = (doc, [f, op, v]) => {
     if (f === ID) return op === ">=" ? doc.id >= v : doc.id <= v;
     const x = doc.data[f];
@@ -43,7 +43,7 @@ function makeAdmin(store) {
   firestore.FieldValue = {arrayRemove: x => ({arrayRemove: x})};
   firestore.FieldPath = {documentId: () => ID};
   return {
-    sent,
+    sent, messages,
     admin: {
       initializeApp() {}, credential: {cert: () => ({})}, firestore,
       // like firebase-admin: sendEach throws only when the connection itself fails; a failed message is a result {success:false, error:{code}}, not an exception
@@ -55,7 +55,7 @@ function makeAdmin(store) {
           if (store.__codeByToken && store.__codeByToken[m.token]) return {success: false, error: {code: store.__codeByToken[m.token]}};
           if (store.__sendFailAll) return {success: false, error: {code: store.__sendFailAll}};
           if (store.__failTokenResp === m.token) return {success: false, error: {code: "messaging/server-unavailable"}};
-          sent.push(m.token); return {success: true};
+          sent.push(m.token); messages.push({token: m.token, title: m.notification.title, body: m.notification.body, link: m.data.link}); return {success: true};
         });
         return {responses, successCount: responses.filter(r => r.success).length, failureCount: responses.filter(r => !r.success).length};
       }}),
@@ -64,7 +64,7 @@ function makeAdmin(store) {
 }
 
 async function runJob(store) {
-  const {admin, sent} = makeAdmin(store);
+  const {admin, sent, messages} = makeAdmin(store);
   const load = Module._load, now = Date.now, log = console.log, err = console.error;
   const logs = [];
   let result, shouldFail;
@@ -77,7 +77,7 @@ async function runJob(store) {
     const mod = Module.createRequire(import.meta.url)("../jobs/reminders.js");
     shouldFail = mod.shouldFail; result = await mod.main();
   } finally { Module._load = load; Date.now = now; console.log = log; console.error = err; }
-  return {sent, logs, result, shouldFail};
+  return {sent, logs, result, shouldFail, messages};
 }
 
 const DUE = "11:30"; // 30 minutes before the fake "now"
@@ -257,4 +257,129 @@ test("shouldFail: nothing attempted, partial and total failure", async () => {
   assert.equal(shouldFail({attempts: 3, failed: 2}), false);
   assert.equal(shouldFail({attempts: 3, failed: 3}), true);
   assert.equal(shouldFail({attempts: 1, failed: 1}), true);
+});
+
+/* ---------- weekly reports follow each child's own week (planWeekStart) ---------- */
+// NOW is a Tuesday (2026-11-10). A child whose in-order plan started on a Tuesday begins a new week today; one that started on a Wednesday does not.
+const weeklyOf = r => r.messages.filter(m => m.link.startsWith("/?report=1"));
+const parentWith = kids => ({users: {p: {remindAt: DUE, offset: 0, tokens: ["T-P"], lang: "ar"}}, kids, days: {}, halaqas: {}, reminders: {}});
+const plan2 = (start, extra = {}) => Object.assign({algo: 2, start, surahs: [78]}, extra);
+
+test("weekly report: a child is reported on the weekday its plan started, with its own link", async () => {
+  const store = parentWith({
+    a: Object.assign({name: "أحمد", parentUid: "p"}, plan2("2026-11-03")),   // started on a Tuesday: its week begins today
+    b: {name: "بسمة", parentUid: "p", surahs: [78]},                           // older plan: the account's week start (Saturday)
+    c: Object.assign({name: "جميلة", parentUid: "p"}, plan2("2026-11-04")),   // started on a Wednesday
+  });
+  const r = await runJob(store);
+  const w = weeklyOf(r);
+  assert.equal(w.length, 1);
+  assert.equal(w[0].link, "/?report=1&kid=a", "one child: the link carries that child");
+  assert.ok(w[0].body.includes("أحمد") && !w[0].body.includes("بسمة") && !w[0].body.includes("جميلة"), w[0].body);
+  assert.equal(store.users.p.lastWeekly, "2026-11-10");
+});
+
+test("weekly report: children whose weeks begin on the same day are reported together", async () => {
+  const store = parentWith({
+    a: Object.assign({name: "أحمد", parentUid: "p"}, plan2("2026-11-03")),
+    b: Object.assign({name: "بسمة", parentUid: "p"}, plan2("2026-10-27")),   // also a Tuesday
+  });
+  const w = weeklyOf(await runJob(store));
+  assert.equal(w.length, 1);
+  assert.equal(w[0].link, "/?report=1&kid=a", "several children: the link opens the first one named");
+  assert.ok(w[0].body.includes("أحمد") && w[0].body.includes("بسمة"));
+});
+
+test("weekly report: older plans still follow the account's week start; nothing is sent on other days but the day is marked", async () => {
+  // week start Tuesday: the older plan's child is reported today
+  let store = parentWith({b: {name: "بسمة", parentUid: "p", surahs: [78]}});
+  store.users.p.weekStart = 2;
+  let w = weeklyOf(await runJob(store));
+  assert.equal(w.length, 1); assert.ok(w[0].body.includes("بسمة"));
+  // default week start (Saturday) and a child whose week begins on a Wednesday: no report today
+  store = parentWith({c: Object.assign({name: "جميلة", parentUid: "p"}, plan2("2026-11-04")), b: {name: "بسمة", parentUid: "p", surahs: [78]}});
+  const r = await runJob(store);
+  assert.equal(weeklyOf(r).length, 0);
+  assert.equal(store.users.p.lastWeekly, "2026-11-10", "marked, so the job does not look again today");
+});
+
+test("weekly report: a child in a class follows the teacher's plan for the student, then the class plan", async () => {
+  const store = parentWith({k: {name: "علي", parentUid: "p", halaqaId: "h", surahs: [78]}});
+  store.halaqas = {h: {name: "حلقة", teacherUid: "t", plan: plan2("2026-11-03")}};   // class plan started on a Tuesday
+  assert.equal(weeklyOf(await runJob(store)).length, 1, "the class plan decides");
+  store.users.p.lastWeekly = undefined; delete store.users.p.lastWeekly;
+  store.halaqas.h.studentPlans = {k: plan2("2026-11-04")};                            // this student's own plan started on a Wednesday
+  assert.equal(weeklyOf(await runJob(store)).length, 0, "the student's plan wins over the class plan");
+});
+
+test("weekly report: nothing on the day a plan starts, nor before a whole week has passed", async () => {
+  // the plan was saved today (a Tuesday): the weekday matches, but there is no finished week to report
+  let store = parentWith({a: Object.assign({name: "أحمد", parentUid: "p"}, plan2("2026-11-10"))});
+  let r = await runJob(store);
+  assert.equal(weeklyOf(r).length, 0, "saved today");
+  assert.equal(store.users.p.lastWeekly, "2026-11-10");
+  // a start that has not come yet (a device with a later date saved it)
+  store = parentWith({a: Object.assign({name: "أحمد", parentUid: "p"}, plan2("2026-11-17"))});
+  assert.equal(weeklyOf(await runJob(store)).length, 0, "starts next week");
+  // exactly one week after the start: the first report, covering the seven days of the plan
+  store = parentWith({a: Object.assign({name: "أحمد", parentUid: "p"}, plan2("2026-11-03"))});
+  assert.equal(weeklyOf(await runJob(store)).length, 1, "a week has passed");
+  // an older plan has no start to wait for: reported on the account's week start as before
+  store = parentWith({b: {name: "بسمة", parentUid: "p", surahs: [78], start: "2026-11-10"}});
+  store.users.p.weekStart = 2;
+  assert.equal(weeklyOf(await runJob(store)).length, 1, "older plans are not held back by a start date");
+});
+
+test("weekly report: a class plan saved today is not reported today", async () => {
+  const store = {
+    users: {t: {summaryAt: DUE, offset: 0, tokens: ["T-T"], lang: "ar"}},
+    halaqas: {h1: {name: "الأولى", teacherUid: "t", plan: plan2("2026-11-10")}},
+    kids: {s1: {name: "أ", teacherUid: "t", halaqaId: "h1"}}, days: {}, reminders: {},
+  };
+  const r = await runJob(store);
+  assert.deepEqual(r.messages.filter(m => m.link.startsWith("/?hreport=")), []);
+});
+
+test("weekly report: the child's own plan is used when the class has no record or no plan for the student", async () => {
+  // the class document is gone: the child's own plan (started on a Tuesday) decides
+  let store = parentWith({k: Object.assign({name: "علي", parentUid: "p", halaqaId: "gone"}, plan2("2026-11-03"))});
+  assert.equal(weeklyOf(await runJob(store)).length, 1, "no class document");
+  // the student's entry was removed (null) and the class plan started on a Wednesday: not today
+  store = parentWith({k: Object.assign({name: "علي", parentUid: "p", halaqaId: "h"}, plan2("2026-11-03"))});
+  store.halaqas = {h: {name: "حلقة", teacherUid: "t", plan: plan2("2026-11-04"), studentPlans: {k: null}}};
+  assert.equal(weeklyOf(await runJob(store)).length, 0, "the class plan, since the student's own entry is empty");
+  // a class with an empty plan: back to the child's own plan
+  store = parentWith({k: Object.assign({name: "علي", parentUid: "p", halaqaId: "h"}, plan2("2026-11-03"))});
+  store.halaqas = {h: {name: "حلقة", teacherUid: "t", plan: {surahs: [], ranges: []}}};
+  assert.equal(weeklyOf(await runJob(store)).length, 1, "an empty class plan is no plan");
+});
+
+test("weekly class report: sent on the weekday of the class plan", async () => {
+  const mk = plan => ({
+    users: {t: {summaryAt: DUE, offset: 0, tokens: ["T-T"], lang: "ar"}},
+    halaqas: {h1: {name: "الأولى", teacherUid: "t", plan}, h2: {name: "الثانية", teacherUid: "t", plan: {surahs: [78]}}},
+    kids: {s1: {name: "أ", teacherUid: "t", halaqaId: "h1"}, s2: {name: "ب", teacherUid: "t", halaqaId: "h2"}}, days: {}, reminders: {},
+  });
+  let r = await runJob(mk(plan2("2026-11-03")));
+  let links = r.messages.map(m => m.link).filter(l => l.startsWith("/?hreport="));
+  assert.deepEqual(links, ["/?hreport=h1"], "only the class whose week begins today (Tuesday), not the older-plan class (Saturday)");
+  r = await runJob(mk(plan2("2026-11-04")));
+  links = r.messages.map(m => m.link).filter(l => l.startsWith("/?hreport="));
+  assert.deepEqual(links, [], "a class plan that started on a Wednesday: nothing on Tuesday");
+});
+
+test("the job and the app agree on the weekday a plan's week begins", async () => {
+  const {planWeekStart: appRule} = await import("../src/planner.js");
+  const saved = Module._load; Module._load = function (req, ...rest) { return req === "firebase-admin" ? makeAdmin({}).admin : saved.call(this, req, ...rest); };
+  process.env.FIREBASE_SERVICE_ACCOUNT = "{}";
+  let jobRule;
+  try { const mod = Module.createRequire(import.meta.url); delete mod.cache[mod.resolve("../jobs/reminders.js")]; jobRule = mod("../jobs/reminders.js").planWeekStart; } finally { Module._load = saved; }
+  const plans = [
+    undefined, null, {}, {surahs: [1]}, {algo: 1, start: "2026-11-11"}, {algo: "2", start: "2026-11-11"}, {algo: 2}, {algo: 2, start: 5}, {algo: 2, start: ""},
+    {algo: 2, start: "2026-11-11"}, {algo: 2, start: "2026-11-07"}, {algo: 2, start: "2026-11-08"}, {algo: 2, start: "2026-11-09"}, {algo: 2, start: "2026-11-10"},
+    {algo: 2, start: "2026-11-12"}, {algo: 2, start: "2026-11-13"}, {algo: 2, start: "2024-02-29"}, {algo: 2, start: "2026-02-30"}, {algo: 2, start: "2026-13-01"},
+    {algo: 2, start: "20261111"}, {algo: 2, start: "2026-1-1"}, {algo: 2, start: "x"},
+  ];
+  for (const p of plans) for (const fb of [0, 1, 6]) assert.equal(jobRule(p, fb), appRule(p, fb), JSON.stringify(p) + " fallback " + fb);
+  assert.equal(jobRule({algo: 2, start: "2026-11-11"}, 6), 3, "Wednesday");
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {AY0, AW, ALGO_PAGES, bins, planItems, itemPages, addDays, planChanged, planStamp, clampStart, giftDays, giftStats} from "../src/planner.js";
+import {AY0, AW, ALGO_PAGES, bins, planItems, itemPages, addDays, planChanged, planStamp, clampStart, giftDays, giftStats, planWeekStart, weekOfPlan, weekOfWs, diffDays} from "../src/planner.js";
 import {cleanKid} from "../src/backup.js";
 
 const range = (a, b) => { const r = []; for (let i = a; i <= b; i++) r.push(i); return r; };
@@ -338,4 +338,53 @@ test("giftStats: bad star values count as no star", () => {
   const plan = mk({surahs: [112], start: "2026-01-03"});
   const s = giftStats(plan, "2026-01-03", d => ({"2026-01-03": "x", "2026-01-04": null, "2026-01-05": undefined, "2026-01-06": -1}[d]));
   assert.deepEqual([s.tot, s.rated, s.done], [-1, 0, 0]);
+});
+
+/* ---------- a plan's week: seven days counted from the day it was saved ---------- */
+test("planWeekStart: the weekday of the start for the in-order plan, the account's setting for everything else", () => {
+  assert.equal(planWeekStart(mk({start: "2026-11-11"}), 6), 3, "Wednesday");
+  for (const [d, wd] of [["2026-11-07", 6], ["2026-11-08", 0], ["2026-11-09", 1], ["2026-11-10", 2], ["2026-11-11", 3], ["2026-11-12", 4], ["2026-11-13", 5]])
+    assert.equal(planWeekStart(mk({start: d}), 1), wd, d);
+  // not the in-order plan, or no usable start: the fallback
+  for (const p of [undefined, null, {}, mk({start: "2026-11-11"}, 0), mk({start: "2026-11-11"}, 1), Object.assign(mk({start: "2026-11-11"}), {algo: "2"}),
+    mk({start: ""}), mk({start: undefined}), mk({start: 5}), mk({start: "x"}), mk({start: "20261111"}), mk({start: "2026-1-1"}), mk({start: "2026-02-30"}), mk({start: "2026-13-01"})])
+    for (const fb of [0, 1, 6]) assert.equal(planWeekStart(p, fb), fb, JSON.stringify(p));
+});
+
+test("weekOfPlan: the week that contains a date, in the plan's own weeks", () => {
+  const p = mk({start: "2026-11-11"});            // saved on a Wednesday
+  assert.equal(weekOfPlan(p, "2026-11-11", 6), "2026-11-11");
+  assert.equal(weekOfPlan(p, "2026-11-17", 6), "2026-11-11", "the seventh day (Tuesday) is still the first week");
+  assert.equal(weekOfPlan(p, "2026-11-18", 6), "2026-11-18");
+  assert.equal(weekOfPlan(p, "2026-11-10", 6), "2026-11-04", "before the start the same weekday keeps the weeks aligned");
+  // an older plan keeps the account's week start
+  assert.equal(weekOfPlan(mk({start: "2026-11-11"}, 0), "2026-11-11", 6), weekOfWs("2026-11-11", 6));
+  assert.equal(weekOfPlan(undefined, "2026-11-11", 0), weekOfWs("2026-11-11", 0));
+  // every date is in a week that starts on the plan's weekday, at most six days before it, and weeks tile the calendar without gaps
+  for (const start of ["2026-11-07", "2026-11-08", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"]) {
+    const q = mk({start}); let prev = null;
+    for (let i = -20; i <= 20; i++) {
+      const d = addDays(start, i), w = weekOfPlan(q, d, 6), back = diffDays(w, d);
+      assert.ok(back >= 0 && back <= 6, start + " " + d);
+      assert.equal(new Date(w + "T00:00:00").getDay(), planWeekStart(q, 6));
+      assert.equal(weekOfPlan(q, w, 6), w, "a week's first day is in its own week");
+      if (prev && back !== 0) assert.equal(w, prev, "consecutive days of one week share it");
+      prev = w;
+    }
+  }
+});
+
+test("a plan saved mid-week has a first gift of seven full days, and no empty days in its week", () => {
+  const p = mk({start: "2026-11-11", surahs: range(78, 114)});   // saved on a Wednesday
+  const w = weekOfPlan(p, "2026-11-11", 6);                       // its first week starts that day
+  assert.deepEqual(giftDays(p, w), Array.from({length: 7}, (_, i) => addDays(w, i)), "all seven days are asked for");
+  const stars = {}; for (let i = 0; i < 7; i++) stars[addDays(w, i)] = 3;
+  const g = giftStats(p, w, d => stars[d] || 0);
+  assert.deepEqual([g.need, g.done, g.open, g.left], [7, 7, true, 0]);
+  const g6 = giftStats(p, w, d => (d === addDays(w, 6) ? 0 : (stars[d] || 0)));
+  assert.deepEqual([g6.need, g6.done, g6.open, g6.left], [7, 6, false, 1], "one day short: the gift stays closed");
+  // the calendar week that used to contain the start asked for only 3 days; the plan's own week asks for 7
+  assert.equal(giftDays(p, weekOfWs("2026-11-11", 6)).length, 3);
+  for (let i = 0; i < 7; i++) assert.ok(planItems(p, addDays(w, i)).length > 0, "wird on every day of its first week: " + addDays(w, i));
+  assert.equal(planItems(p, addDays(w, -1)).length, 0, "and none on the day before the start");
 });
