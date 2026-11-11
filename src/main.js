@@ -836,7 +836,7 @@ function renderEdit(){
   if($("eLooks"))$("eLooks").querySelectorAll(".lk").forEach(b=>b.onclick=()=>{d.look=+b.dataset.lk;$("eLooks").querySelectorAll(".lk").forEach(x=>x.setAttribute("aria-pressed",String(x===b)))});
   if($("eSkin"))$("eSkin").querySelectorAll(".skin").forEach(b=>b.onclick=()=>{d.skin=+b.dataset.sk;renderEdit()});
   if(!tp)bindPlan(d);
-  const leave=()=>{draft=null;go(ST.kids[d.id]||!kidsList().length?(gateOk?"settings":"main"):"main")};
+  const leave=()=>{draft=null;if(ST.kids[d.id]||!kidsList().length)go(gateOk?"settings":"main");else{gateOk=false;go("main")}};
   $("eBack").onclick=leave;$("eCancel").onclick=leave;
   const hm=(m,ok)=>{$("hMsg").className="msg "+(ok?"ok":"err");$("hMsg").textContent=m};
   if($("hJoin"))$("hJoin").onclick=async()=>{const code=$("hCodeIn").value.trim().toUpperCase();if(!code)return;
@@ -846,7 +846,7 @@ function renderEdit(){
   bindCoParent(live,me,renderEdit);
   if($("hLeave"))$("hLeave").onclick=async()=>{await D.leaveHalaqa(d.id);d.halaqaId=null;d.teacherUid=null;renderEdit()};
   if($("cdSet"))$("cdSet").onclick=()=>{prefs.child={uid:ST.user.uid,kid:d.id};savePrefs();gateOk=false;go("main")};
-  $("eSave").onclick=async()=>{const ok=await saveDraft(false);if(ok){prefs.cur=d.id;savePrefs();draft=null;go("main");scrollToday()}};
+  $("eSave").onclick=async()=>{const ok=await saveDraft(false);if(ok){prefs.cur=d.id;savePrefs();draft=null;gateOk=false;go("main");scrollToday()}};
   let armed=false;if($("eDel"))$("eDel").onclick=async()=>{if(!armed){armed=true;$("eDel").className="btn warn big";$("eDel").textContent=t("del2");return}
     await D.deleteKid(d.id);if(prefs.child&&prefs.child.kid===d.id)prefs.child=null;if(prefs.cur===d.id)prefs.cur=null;savePrefs();draft=null;go("settings")};
 }
