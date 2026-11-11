@@ -13,15 +13,30 @@ service cloud.firestore {
     }
     // A child may point at a class only after that class's teacher approved the request.
     function linkOk(d, kidId) {
-      return d.get('teacherUid', null) == null
-        || (d.get('halaqaId', null) != null
+      return (d.get('teacherUid', null) == null && d.get('halaqaId', null) == null)
+        || (d.get('teacherUid', null) != null
+            && d.get('halaqaId', null) != null
             && halaqa(d.halaqaId).teacherUid == d.teacherUid
             && approved(d.halaqaId, kidId));
     }
 
-    // Parent/teacher profile (reminder times, device tokens). Owner only.
+    // Parent/teacher profile (reminder times, device tokens). Owner only. The scheduled job reads these fields, so their shapes are checked.
+    // Only the fields a write touches are checked (all of them when the document is created): a value that was already odd in an older document
+    // never blocks the account from saving something else, and a list of devices that grew too long may still be trimmed.
+    function timeOk(v) { return v == null || (v is string && (v == '' || v.matches('[0-2][0-9]:[0-5][0-9]'))); }
+    function tokensOk(v) { return v is list && (v.size() <= 50 || (resource != null && v.size() < resource.data.get('tokens', []).size())); }
+    function profileOk(d, ch) {
+      return (!ch.hasAny(['remindAt']) || timeOk(d.get('remindAt', null)))
+          && (!ch.hasAny(['summaryAt']) || timeOk(d.get('summaryAt', null)))
+          && (!ch.hasAny(['offset']) || d.get('offset', null) == null || (d.offset is number && d.offset >= -840 && d.offset <= 840))
+          && (!ch.hasAny(['lang']) || d.get('lang', null) == null || d.lang in ['ar', 'en'])
+          && (!ch.hasAny(['weekStart']) || d.get('weekStart', null) == null || (d.weekStart is number && d.weekStart >= 0 && d.weekStart <= 6))
+          && (!ch.hasAny(['tokens']) || tokensOk(d.get('tokens', [])));
+    }
     match /users/{uid} {
-      allow read, write: if signedIn() && me() == uid;
+      allow read, delete: if signedIn() && me() == uid;
+      allow create: if signedIn() && me() == uid && profileOk(request.resource.data, request.resource.data.keys().toSet());
+      allow update: if signedIn() && me() == uid && profileOk(request.resource.data, request.resource.data.diff(resource.data).affectedKeys());
     }
 
     // Class code -> class id. Looking up one code is allowed; listing the codes is not.
@@ -95,6 +110,7 @@ service cloud.firestore {
       allow create: if signedIn() && request.resource.data.teacherUid == me()
                     && request.resource.data.keys().hasOnly(['kidId', 'teacherUid', 'lang', 'at', 'kind'])
                     && request.resource.data.get('kind', 'remind') in ['remind', 'note']
+                    && request.resource.data.kidId is string && request.resource.data.lang in ['ar', 'en'] && request.resource.data.at is number
                     && get(/databases/$(database)/documents/kids/$(request.resource.data.kidId)).data.get('teacherUid', null) == me();
     }
 
@@ -109,7 +125,11 @@ service cloud.firestore {
                     && request.resource.data.parentUid == resource.data.parentUid
                     && (resource.data.parentUid == me()
                         ? request.resource.data.get('parentUids', [resource.data.parentUid]).hasAny([me()])
-                        : request.resource.data.get('parentUids', []).toSet().difference(resource.data.get('parentUids', []).toSet()).size() == 0)
+                        : (request.resource.data.get('parentUids', []).toSet().difference(resource.data.get('parentUids', []).toSet()).size() == 0
+                           && resource.data.get('parentUids', []).toSet().difference(request.resource.data.get('parentUids', []).toSet()).hasOnly([me()])
+                           && request.resource.data.get('parentNames', {}).diff(resource.data.get('parentNames', {})).affectedKeys().hasOnly([me()])
+                           && (!(me() in request.resource.data.get('parentNames', {}))
+                               || (request.resource.data.parentNames[me()] is string && request.resource.data.parentNames[me()].size() <= 30))))
                     && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['halaqaId', 'teacherUid'])
                         || linkOk(request.resource.data, kid));
       // A co-parent joins: the child names an invite that this user has claimed. Only parentUids/parentNames change,
@@ -128,7 +148,8 @@ service cloud.firestore {
       // The teacher can take a student out of the class, or put an approved, currently unassigned child into it.
       allow update: if signedIn() && resource.data.get('teacherUid', null) == me()
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['halaqaId', 'teacherUid'])
-                    && request.resource.data.get('teacherUid', null) == null;
+                    && request.resource.data.get('teacherUid', null) == null
+                    && request.resource.data.get('halaqaId', null) == null;
       allow update: if signedIn() && resource.data.get('teacherUid', null) == null
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['halaqaId', 'teacherUid'])
                     && request.resource.data.get('teacherUid', null) == me()
