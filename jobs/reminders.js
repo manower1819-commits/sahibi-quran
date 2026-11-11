@@ -32,18 +32,27 @@ async function kidsOfParent(uid){
   const [a,b]=await Promise.all([db.collection("kids").where("parentUid","==",uid).get(),db.collection("kids").where("parentUids","array-contains",uid).get()]);
   const m=new Map();[...a.docs,...b.docs].forEach(d=>m.set(d.id,d));return[...m.values()];
 }
+// FCM send attempts of this run and how many failed outright (see send); main() resets them
+const sendStats={attempts:0,failed:0};
+const DEAD_TOKEN=["messaging/registration-token-not-registered","messaging/invalid-registration-token","messaging/invalid-argument"];
 async function send(targets,title,body,link){
   const all=[];targets.forEach(x=>(Array.isArray(x.tokens)?x.tokens:[]).forEach(tk=>{if(typeof tk==="string"&&tk)all.push({ref:x.ref,tk})}));
   const uniq=[...new Map(all.map(x=>[x.tk,x])).values()];
   if(!uniq.length)return 0;
-  const res=await admin.messaging().sendEach(uniq.map(x=>({token:x.tk,notification:{title,body},data:{link:link||"/"},webpush:{fcmOptions:{link:BASE+(link||"/")},notification:{icon:"/icons/icon-192.png",dir:"auto"}}})));
+  sendStats.attempts++;
+  let res;
+  try{res=await admin.messaging().sendEach(uniq.map(x=>({token:x.tk,notification:{title,body},data:{link:link||"/"},webpush:{fcmOptions:{link:BASE+(link||"/")},notification:{icon:"/icons/icon-192.png",dir:"auto"}}})))}catch(e){sendStats.failed++;throw e}
   await Promise.all(res.responses.map((r,i)=>{const c=r.error&&r.error.code;
-    if(c==="messaging/registration-token-not-registered"||c==="messaging/invalid-registration-token"||c==="messaging/invalid-argument")return uniq[i].ref.update({tokens:FV.arrayRemove(uniq[i].tk)}).catch(()=>{})}));
+    if(DEAD_TOKEN.includes(c))return uniq[i].ref.update({tokens:FV.arrayRemove(uniq[i].tk)}).catch(()=>{})}));
+  // sendEach does not throw when the messages fail (it returns one result per message): when not one message arrived and at least one failed for a reason other than a dead token,
+  // the service (not the recipients) is the problem. Fail this send so the account is not marked as reminded today and is tried again at the next run.
+  const hard=res.responses.filter(r=>!r.success&&!DEAD_TOKEN.includes(r.error&&r.error.code));
+  if(res.successCount===0&&hard.length>0){sendStats.failed++;const e=new Error("send failed");e.code=(hard[0].error&&hard[0].error.code)||"send-failed";throw e}
   return res.successCount;
 }
 
 async function main(){
-  let n=0,skipped=0;
+  let n=0,skipped=0;sendStats.attempts=0;sendStats.failed=0;
   // one account or queue entry with bad values (a non-numeric offset, tokens that are not a list...) must not stop everyone else's reminders;
   // log only what and which id, never the values or the tokens
   const skip=(what,id,e)=>{skipped++;console.error("skipped",what,id,(e&&(e.code||e.name))||"error")};
@@ -108,7 +117,10 @@ async function main(){
     }
     await t.ref.update({lastHWeekly:d});
   }catch(e){skip("teacher weekly",t.id,e)}}
-  console.log("notifications sent:",n,"skipped:",skipped);
+  console.log("notifications sent:",n,"skipped:",skipped,"send attempts failed:",sendStats.failed+"/"+sendStats.attempts);
+  return{n,skipped,attempts:sendStats.attempts,failed:sendStats.failed};
 }
-module.exports={main,due,local,sumWeek,addD,dow,wsOf,kidsOfParent};
-if(require.main===module)main().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});
+// exit code 1 when messages were attempted and every attempt failed (the sending service is down); a few broken accounts leave the run green
+const shouldFail=r=>!!r&&r.attempts>0&&r.failed===r.attempts;
+module.exports={main,shouldFail,due,local,sumWeek,addD,dow,wsOf,kidsOfParent};
+if(require.main===module)main().then(r=>{if(shouldFail(r)){console.error("every send attempt failed:",r.failed+"/"+r.attempts);process.exit(1)}process.exit(0)},e=>{console.error(e);process.exit(1)});
