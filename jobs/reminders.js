@@ -24,6 +24,21 @@ const due=(at,off,last)=>{if(!at)return null;const L=local(off),late=L.min-hm(at
 const addD=(s,n)=>{const d=new Date(s+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
 const dow=s=>new Date(s+"T00:00:00Z").getUTCDay();
 const wsOf=u=>u.weekStart==null||u.weekStart===""?((u.lang||"ar")==="en"?0:6):+u.weekStart;
+/* The weekday (0 = Sunday) a plan's weeks begin on: the weekday of its start for the in-order distribution (algo 2), otherwise the account's own setting.
+   The same rule as planWeekStart in src/planner.js (test/reminders.test.js checks that they agree). */
+const planWeekStart=(p,fallback)=>{if(p&&p.algo===2&&typeof p.start==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(p.start)){const d=new Date(p.start+"T00:00:00Z");if(!isNaN(d)&&d.toISOString().slice(0,10)===p.start)return d.getUTCDay()}return fallback};
+/* true on the first day of a new week of this plan, and only when a whole week has gone by since the plan started (a plan saved today has nothing to report today) */
+const weekBeginsToday=(p,fallback,d)=>dow(d)===planWeekStart(p,fallback)&&!(planWeekStart(p,-1)!==-1&&p.start>=d);
+const planHas=p=>!!p&&((p.surahs||[]).length>0||(p.ranges||[]).length>0);
+/* the plan a child follows: the teacher's plan for that student, else the class plan, else the child's own (as effPlan in src/main.js) */
+async function planOfKid(kd,kidId,cache){
+  if(!kd.halaqaId)return kd;
+  const hid=String(kd.halaqaId);
+  if(!cache.has(hid)){const s=await db.collection("halaqas").doc(hid).get();cache.set(hid,s.exists?s.data():null)}
+  const h=cache.get(hid);if(!h)return kd;
+  const sp=(h.studentPlans||{})[kidId];
+  return planHas(sp)?sp:planHas(h.plan)?h.plan:kd;
+}
 async function weekDays(ref,a,b){const ID=admin.firestore.FieldPath.documentId();const s=await ref.collection("days").where(ID,">=",a).where(ID,"<=",b).get();return s.docs.map(d=>d.data())}
 function sumWeek(days){let done=0,home=0,mist=0;days.forEach(r=>{const hs=+(r.stars||0);home+=hs;if(hs>0)done++;mist+=new Set([...(r.weak||[]),...(r.tWeak||[])]).size});return{done,home,mist}}
 
@@ -99,18 +114,24 @@ async function main(){
       }
     }catch(e){skip("queued reminder",r.id,e)}finally{await r.ref.delete().catch(e=>skip("queue delete",r.id,e))}
   }
-  // 4) weekly reports (first day of the new week)
+  // 4) weekly reports, on the first day of a new week. A child's week begins on the weekday its plan started (planWeekStart), a class's on the weekday of the class plan,
+  //    so each child (class) is reported on its own weekday, for the seven days that have just ended.
+  const planCache=new Map();
   for(const p of parents.docs){try{
-    const u=p.data(),d=due(u.remindAt,u.offset,u.lastWeekly);if(!d||dow(d)!==wsOf(u))continue;
-    const lang=u.lang||"ar",a=addD(d,-7),b=addD(d,-1),kids=await kidsOfParent(p.id),lines=[];
-    for(const k of kids){const w=sumWeek(await weekDays(k.ref,a,b));lines.push(tx(lang,"w_line",k.data().name||"",w.done,w.home,w.mist))}
-    if(lines.length)n+=await send([{ref:p.ref,tokens:u.tokens}],tx(lang,"w_t"),lines.join("\n"),"/?report=1");
+    const u=p.data(),d=due(u.remindAt,u.offset,u.lastWeekly);if(!d)continue;
+    const lang=u.lang||"ar",a=addD(d,-7),b=addD(d,-1),lines=[],ids=[];
+    for(const k of await kidsOfParent(p.id)){const kd=k.data();
+      if(!weekBeginsToday(await planOfKid(kd,k.id,planCache),wsOf(u),d))continue;
+      const w=sumWeek(await weekDays(k.ref,a,b));lines.push(tx(lang,"w_line",kd.name||"",w.done,w.home,w.mist));ids.push(k.id)}
+    // the link opens the report of the first child named in the notification
+    if(lines.length)n+=await send([{ref:p.ref,tokens:u.tokens}],tx(lang,"w_t"),lines.join("\n"),"/?report=1&kid="+encodeURIComponent(ids[0]));
     await p.ref.update({lastWeekly:d});
   }catch(e){skip("parent weekly",p.id,e)}}
   for(const t of teachers.docs){try{
-    const u=t.data(),d=due(u.summaryAt,u.offset,u.lastHWeekly);if(!d||dow(d)!==wsOf(u))continue;
+    const u=t.data(),d=due(u.summaryAt,u.offset,u.lastHWeekly);if(!d)continue;
     const lang=u.lang||"ar",a=addD(d,-7),b=addD(d,-1),hs=await db.collection("halaqas").where("teacherUid","==",t.id).get();
     for(const h of hs.docs){
+      if(!weekBeginsToday(h.data().plan,wsOf(u),d))continue;
       const st=await db.collection("kids").where("teacherUid","==",t.id).where("halaqaId","==",h.id).get();if(st.empty)continue;
       let full=0,home=0;for(const k of st.docs){const w=sumWeek(await weekDays(k.ref,a,b));if(w.done===7)full++;home+=w.home}
       n+=await send([{ref:t.ref,tokens:u.tokens}],tx(lang,"hw_t",h.data().name||""),tx(lang,"hw_b",full,st.size,(home/st.size).toFixed(1)),"/?hreport="+h.id);
@@ -122,5 +143,5 @@ async function main(){
 }
 // exit code 1 when messages were attempted and every attempt failed (the sending service is down); a few broken accounts leave the run green
 const shouldFail=r=>!!r&&r.attempts>0&&r.failed===r.attempts;
-module.exports={main,shouldFail,due,local,sumWeek,addD,dow,wsOf,kidsOfParent};
+module.exports={main,shouldFail,planWeekStart,weekBeginsToday,due,local,sumWeek,addD,dow,wsOf,kidsOfParent};
 if(require.main===module)main().then(r=>{if(shouldFail(r)){console.error("every send attempt failed:",r.failed+"/"+r.attempts);process.exit(1)}process.exit(0)},e=>{console.error(e);process.exit(1)});
