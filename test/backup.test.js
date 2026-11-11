@@ -50,7 +50,7 @@ test("cleanKid / cleanDay sanitise bad values", () => {
   const k = cleanKid({name: "  علي  ", gender: "zzz", surahs: [0, 1, 1, 115, "5", "x"], ranges: [[2, 5, 3], [2, 1, 300], [2, 1, 3], "x"], cycle: 5, light: 9, weekStart: 3, mode: "hacker", age: 500, theme: "t".repeat(50), created: "now", start: "2026-02-30"});
   assert.equal(k.name, "علي"); assert.equal(k.gender, "m"); assert.deepEqual(k.surahs, [1, 5]); assert.deepEqual(k.ranges, [[2, 1, 3]]);
   assert.equal(k.cycle, 1); assert.equal(k.light, 5); assert.equal(k.weekStart, 6); assert.ok(!("mode" in k)); assert.ok(!("age" in k));
-  assert.equal(k.theme.length, 20); assert.ok(!("created" in k)); assert.ok(!("start" in k), "impossible date dropped");
+  assert.equal(k.theme, "space", "an unknown theme name falls back to space"); assert.ok(!("created" in k)); assert.ok(!("start" in k), "impossible date dropped");
   assert.equal(cleanKid(null), null); assert.equal(cleanKid({name: ""}), null);
   assert.equal(cleanDay({stars: 7}), null);
   assert.deepEqual(cleanDay({stars: 2, nS: "", nF: "", nT: ""}), {stars: 2, nS: "", nF: "", nT: ""});
@@ -62,4 +62,27 @@ test("a child with no plan of their own (class plan) is still kept with their da
   const b = makeBackup([{id: "k9", name: "ليلى", surahs: [], cycle: 1}], {k9: {"2026-11-01": {stars: 2}}}, 0);
   assert.equal(b.kids.length, 1);
   assert.equal(b.kids[0].days["2026-11-01"].stars, 2);
+});
+
+test("import keeps only theme and palette names the app really has", () => {
+  const imp = o => cleanKid(Object.assign({name: "س", surahs: [1]}, o));
+  assert.equal(imp({theme: "ocean"}).theme, "ocean");
+  assert.equal(imp({palette: "night"}).palette, "night");
+  // names that exist on every plain object must not pass for a theme or a palette
+  for (const bad of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "nope", "", 5, null, {}, ["space"]]) {
+    assert.equal(imp({theme: bad}).theme, "space", "theme " + String(bad));
+    assert.equal("palette" in imp({palette: bad}), false, "palette " + String(bad));
+  }
+  assert.equal("palette" in imp({}), false);
+});
+
+test("a theme or palette name stored before this check cannot reach Object's own members", async () => {
+  const {THEMES, THEME_ORDER} = await import("../src/themes.js");
+  const {PALETTES, PALETTE_ORDER} = await import("../src/palettes.js");
+  for (const bad of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+    assert.equal(THEMES[bad], undefined, "THEMES." + bad);
+    assert.equal(PALETTES[bad], undefined, "PALETTES." + bad);
+  }
+  for (const n of THEME_ORDER) assert.ok(THEMES[n] && THEMES[n].c, "theme " + n);
+  for (const n of PALETTE_ORDER) assert.ok(PALETTES[n] && PALETTES[n].v, "palette " + n);
 });
