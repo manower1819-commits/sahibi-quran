@@ -49,11 +49,13 @@ function makeAdmin(store) {
       // like firebase-admin: sendEach throws only when the connection itself fails; a failed message is a result {success:false, error:{code}}, not an exception
       messaging: () => ({sendEach: async msgs => {
         if (store.__sendDown) throw new Error("messaging connection failed");
+        if (msgs.length > 500) throw new Error("messages list must not contain more than 500 items");
+        if (store.__throwOnToken && msgs.some(m => m.token === store.__throwOnToken)) throw new Error("connection lost in this part");
         store.__calls = (store.__calls || 0) + 1;
         const responses = msgs.map(m => {
           if (store.__failCall === store.__calls) return {success: false, error: {code: "messaging/server-unavailable"}};
           if (store.__codeByToken && store.__codeByToken[m.token]) return {success: false, error: {code: store.__codeByToken[m.token]}};
-          if (store.__sendFailAll) return {success: false, error: {code: store.__sendFailAll}};
+          if (store.__sendFailAll) return {success: false, error: {code: store.__sendFailAll, message: store.__failMsg || ""}};
           if (store.__failTokenResp === m.token) return {success: false, error: {code: "messaging/server-unavailable"}};
           sent.push(m.token); messages.push({token: m.token, title: m.notification.title, body: m.notification.body, link: m.data.link}); return {success: true};
         });
@@ -382,4 +384,70 @@ test("the job and the app agree on the weekday a plan's week begins", async () =
   ];
   for (const p of plans) for (const fb of [0, 1, 6]) assert.equal(jobRule(p, fb), appRule(p, fb), JSON.stringify(p) + " fallback " + fb);
   assert.equal(jobRule({algo: 2, start: "2026-11-11"}, 6), 3, "Wednesday");
+});
+
+/* ---------- dead tokens, chunks, and the queue stamp ---------- */
+test("a malformed token is removed, a bad payload is not: both come back as invalid-argument", async () => {
+  // the registration token is the problem: the devices are dropped and the run stays green
+  let store = twoParents({__sendFailAll: "messaging/invalid-argument", __failMsg: "The registration token is not a valid FCM registration token"});
+  let r = await runJob(store);
+  assert.deepEqual([r.result.attempts, r.result.failed], [2, 0]);
+  assert.deepEqual([store.users.a.tokens, store.users.b.tokens], [[], []]);
+  assert.equal(r.shouldFail(r.result), false);
+  // the payload is the problem (it would fail for every device): the tokens stay and the run is red
+  store = twoParents({__sendFailAll: "messaging/invalid-argument", __failMsg: "Invalid JSON payload received. Unknown name"});
+  r = await runJob(store);
+  assert.deepEqual([r.result.attempts, r.result.failed], [2, 2]);
+  assert.deepEqual([store.users.a.tokens, store.users.b.tokens], [["T-A"], ["T-B"]], "nobody loses a working device because of a payload error");
+  assert.equal(r.shouldFail(r.result), true);
+  assert.ok(!("lastRemind" in store.users.a));
+});
+
+test("a dead token is removed from every document that holds it", async () => {
+  const store = {users: {p: {remindAt: DUE, offset: 0, tokens: ["T-X", "T-Y"]}}, kids: {k1: {name: "أ", parentUid: "p", tokens: ["T-X"]}}, days: {}, halaqas: {}, reminders: {},
+    __codeByToken: {"T-X": "messaging/registration-token-not-registered"}};
+  await runJob(store);
+  assert.deepEqual(store.users.p.tokens, ["T-Y"], "the account");
+  assert.deepEqual(store.kids.k1.tokens, [], "and the child's device list");
+});
+
+test("more than 500 devices are sent in parts", async () => {
+  const tokens = Array.from({length: 1200}, (_, i) => "T" + i);
+  const store = {users: {p: {remindAt: DUE, offset: 0, tokens}}, kids: {k: {name: "أ", parentUid: "p"}}, days: {}, halaqas: {}, reminders: {}};
+  const r = await runJob(store);
+  assert.equal(r.sent.length, 1200); assert.equal(new Set(r.sent).size, 1200);
+  assert.deepEqual([r.result.attempts, r.result.failed], [1, 0], "one notification, three parts");
+  assert.equal(store.users.p.lastRemind, "2026-11-10");
+});
+
+test("the teacher's tap: a send that failed does not start the hour of silence", async () => {
+  const mkq = () => ({users: {t: {tokens: ["T-T"]}, p: {tokens: ["T-P"], lang: "ar"}}, kids: {a: {name: "أ", parentUid: "p", teacherUid: "t"}}, days: {}, halaqas: {},
+    reminders: {r1: {kidId: "a", teacherUid: "t", kind: "remind", at: NOW - 1000}}});
+  let store = Object.assign(mkq(), {__sendFailAll: "messaging/server-unavailable"});
+  await runJob(store);
+  assert.ok(!("lastRemindAt" in store.kids.a), "a failed send leaves no stamp, so the teacher can tap again");
+  assert.deepEqual(Object.keys(store.reminders), [], "the tap itself is consumed");
+  store = mkq();
+  const r = await runJob(store);
+  assert.deepEqual(r.sent, ["T-P"]);
+  assert.equal(store.kids.a.lastRemindAt, NOW, "a sent notification starts the hour");
+  // within that hour a second tap is dropped
+  store.reminders = {r2: {kidId: "a", teacherUid: "t", kind: "remind", at: NOW - 500}};
+  assert.deepEqual((await runJob(store)).sent, [], "throttled");
+});
+
+test("parts of 500: a dead token far into the list is matched to the right device, and a part that never went out does not hide the others", async () => {
+  const tokens = Array.from({length: 1200}, (_, i) => "T" + i);
+  const mk = extra => Object.assign({users: {p: {remindAt: DUE, offset: 0, tokens: tokens.slice()}}, kids: {k: {name: "أ", parentUid: "p"}}, days: {}, halaqas: {}, reminders: {}}, extra);
+  // T1100 is in the third part and is the only dead one
+  let store = mk({__codeByToken: {"T1100": "messaging/registration-token-not-registered"}});
+  await runJob(store);
+  assert.equal(store.users.p.tokens.length, 1199);
+  assert.ok(!store.users.p.tokens.includes("T1100") && store.users.p.tokens.includes("T1099") && store.users.p.tokens.includes("T1101"), "exactly that one is gone");
+  // the second part (T500..T999) cannot be sent: the other 700 devices still get it, and the account counts as reminded
+  store = mk({__throwOnToken: "T700"});
+  const r = await runJob(store);
+  assert.equal(r.sent.length, 700); assert.ok(r.sent.includes("T0") && !r.sent.includes("T700") && r.sent.includes("T1100"));
+  assert.deepEqual([r.result.attempts, r.result.failed], [1, 0]);
+  assert.equal(store.users.p.lastRemind, "2026-11-10");
 });
