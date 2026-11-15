@@ -723,7 +723,7 @@ function renderSettings(){
    (hasLocal?'<section class="card"><button class="btn" id="imp">'+t("import_local")+'</button><p class="msg ok" id="impMsg"></p></section>':''))+
    '<section class="card"><h2 class="sh">'+ICONS.user+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><p class="hint">'+t("audio_src")+'</p><p class="hint">'+tanzilLine()+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
-  $("sDone").onclick=()=>{go("main");scrollToday()};
+  $("sDone").onclick=()=>{gateOk=false;go("main");scrollToday()};
   if($("cdOff"))$("cdOff").onclick=async()=>{const kid=prefs.child&&prefs.child.kid;if(kid)await quick(D.disablePush({kidId:kid}));prefs.child=null;savePrefs();renderSettings()};
   $("nOn").onclick=async()=>{const m=$("nMsg");m.className="msg";try{const r=await D.enablePush(ck?{kidId:ck.id}:{});fillStat();m.className="msg "+(r==="ok"?"ok":"err");m.textContent=t({ok:"notif_ok",denied:"notif_denied",unsupported:"notif_unsupported","ios-home":"notif_ios",demo:"notif_demo"}[r]||"err_generic")}catch(e){m.className="msg err";m.textContent=t("err_generic")}};
   const fillStat=()=>{const sup="Notification" in window&&"serviceWorker" in navigator,perm=sup?Notification.permission:"unsupported",
@@ -851,7 +851,7 @@ function renderEdit(){
   if($("eLooks"))$("eLooks").querySelectorAll(".lk").forEach(b=>b.onclick=()=>{d.look=+b.dataset.lk;$("eLooks").querySelectorAll(".lk").forEach(x=>x.setAttribute("aria-pressed",String(x===b)))});
   if($("eSkin"))$("eSkin").querySelectorAll(".skin").forEach(b=>b.onclick=()=>{d.skin=+b.dataset.sk;renderEdit()});
   if(!tp)bindPlan(d);
-  const leave=()=>{draft=null;go(ST.kids[d.id]||!kidsList().length?(gateOk?"settings":"main"):"main")};
+  const leave=()=>{draft=null;if(ST.kids[d.id]||!kidsList().length)go(gateOk?"settings":"main");else{gateOk=false;go("main")}};
   $("eBack").onclick=leave;$("eCancel").onclick=leave;
   const hm=(m,ok)=>{$("hMsg").className="msg "+(ok?"ok":"err");$("hMsg").textContent=m};
   if($("hJoin"))$("hJoin").onclick=async()=>{const code=$("hCodeIn").value.trim().toUpperCase();if(!code)return;
@@ -861,7 +861,7 @@ function renderEdit(){
   bindCoParent(live,me,renderEdit);
   if($("hLeave"))$("hLeave").onclick=async()=>{try{await D.leaveHalaqa(d.id);d.halaqaId=null;d.teacherUid=null;renderEdit()}catch(e){hm(t("err_generic"))}};
   if($("cdSet"))$("cdSet").onclick=()=>{const before=prefs.child&&prefs.child.kid;(async()=>{if(before&&before!==d.id)await quick(D.disablePush({kidId:before}));prefs.child={uid:ST.user.uid,kid:d.id};savePrefs();gateOk=false;go("main")})()};
-  $("eSave").onclick=async()=>{const ok=await saveDraft(false);if(ok){prefs.cur=d.id;savePrefs();draft=null;go("main");scrollToday()}};
+  $("eSave").onclick=async()=>{const ok=await saveDraft(false);if(ok){prefs.cur=d.id;savePrefs();draft=null;gateOk=false;go("main");scrollToday()}};
   let armed=false;if($("eDel"))$("eDel").onclick=async()=>{if(!armed){armed=true;$("eDel").className="btn warn big";$("eDel").textContent=t("del2");return}
     await D.deleteKid(d.id);if(prefs.child&&prefs.child.kid===d.id)prefs.child=null;if(prefs.cur===d.id)prefs.cur=null;savePrefs();draft=null;go("settings")};
 }
