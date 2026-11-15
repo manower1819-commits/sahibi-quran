@@ -49,21 +49,29 @@ async function kidsOfParent(uid){
 }
 // FCM send attempts of this run and how many failed outright (see send); main() resets them
 const sendStats={attempts:0,failed:0};
-const DEAD_TOKEN=["messaging/registration-token-not-registered","messaging/invalid-registration-token","messaging/invalid-argument"];
+/* A failed message means a dead token (the device is gone, so the token is removed) when FCM says the token is unknown or malformed.
+   "invalid-argument" is also what a bad payload gives (every message would fail): it counts as a dead token only when its text speaks of the registration token. */
+const isDead=r=>{const e=r&&r.error;if(!e)return false;const c=e.code;
+  return c==="messaging/registration-token-not-registered"||c==="messaging/invalid-registration-token"||(c==="messaging/invalid-argument"&&/registration token/i.test(String(e.message||"")))};
+const CHUNK=500;   // sendEach takes at most 500 messages
 async function send(targets,title,body,link){
-  const all=[];targets.forEach(x=>(Array.isArray(x.tokens)?x.tokens:[]).forEach(tk=>{if(typeof tk==="string"&&tk)all.push({ref:x.ref,tk})}));
-  const uniq=[...new Map(all.map(x=>[x.tk,x])).values()];
-  if(!uniq.length)return 0;
+  const refs=new Map();   // token -> every document that holds it (the account's and a child's can hold the same one)
+  targets.forEach(x=>(Array.isArray(x.tokens)?x.tokens:[]).forEach(tk=>{if(typeof tk!=="string"||!tk)return;if(!refs.has(tk))refs.set(tk,[]);refs.get(tk).push(x.ref)}));
+  const tokens=[...refs.keys()];
+  if(!tokens.length)return 0;
   sendStats.attempts++;
-  let res;
-  try{res=await admin.messaging().sendEach(uniq.map(x=>({token:x.tk,notification:{title,body},data:{link:link||"/"},webpush:{fcmOptions:{link:BASE+(link||"/")},notification:{icon:"/icons/icon-192.png",dir:"auto"}}})))}catch(e){sendStats.failed++;throw e}
-  await Promise.all(res.responses.map((r,i)=>{const c=r.error&&r.error.code;
-    if(DEAD_TOKEN.includes(c))return uniq[i].ref.update({tokens:FV.arrayRemove(uniq[i].tk)}).catch(()=>{})}));
+  const responses=[];
+  for(let i=0;i<tokens.length;i+=CHUNK){
+    const part=tokens.slice(i,i+CHUNK);
+    try{const res=await admin.messaging().sendEach(part.map(tk=>({token:tk,notification:{title,body},data:{link:link||"/"},webpush:{fcmOptions:{link:BASE+(link||"/")},notification:{icon:"/icons/icon-192.png",dir:"auto"}}})));res.responses.forEach(r=>responses.push(r))}
+    catch(e){part.forEach(()=>responses.push({success:false,error:e}))}   // this part never went out (the connection failed)
+  }
+  await Promise.all(responses.map((r,i)=>isDead(r)?Promise.all(refs.get(tokens[i]).map(ref=>ref.update({tokens:FV.arrayRemove(tokens[i])}).catch(()=>{}))):null));
   // sendEach does not throw when the messages fail (it returns one result per message): when not one message arrived and at least one failed for a reason other than a dead token,
   // the service (not the recipients) is the problem. Fail this send so the account is not marked as reminded today and is tried again at the next run.
-  const hard=res.responses.filter(r=>!r.success&&!DEAD_TOKEN.includes(r.error&&r.error.code));
-  if(res.successCount===0&&hard.length>0){sendStats.failed++;const e=new Error("send failed");e.code=(hard[0].error&&hard[0].error.code)||"send-failed";throw e}
-  return res.successCount;
+  const hard=responses.filter(r=>!r.success&&!isDead(r)),ok=responses.filter(r=>r.success).length;
+  if(ok===0&&hard.length>0){sendStats.failed++;const e=new Error("send failed");e.code=(hard[0].error&&hard[0].error.code)||"send-failed";throw e}
+  return ok;
 }
 
 async function main(){
@@ -107,10 +115,10 @@ async function main(){
       if(k.exists&&k.data().teacherUid===x.teacherUid&&Date.now()-(x.at||0)<6*3600e3){
         const kd=k.data(),fld=fieldFor(x.kind);
         if(throttled(kd[fld],Date.now()))continue; // already notified this family of this kind within the hour (the finally below still removes the queue entry)
-        await kref.update({[fld]:Date.now()});
         const uids=[...new Set([kd.parentUid,...(kd.parentUids||[])].filter(Boolean))],targets=[{ref:kref,tokens:kd.tokens}];let lang=x.lang||"ar";
         for(const pid of uids){const pref=db.collection("users").doc(pid),p=await pref.get(),pu=p.exists?p.data():{};if(pid===kd.parentUid)lang=pu.lang||lang;targets.push({ref:pref,tokens:pu.tokens})}
         n+=await send(targets,tx(lang,x.kind==="note"?"n_t":"t_t"),x.kind==="note"?tx(lang,"n_b",kd.name||""):tx(lang,kd.gender==="f"?"t_bf":"t_b",kd.name||""));
+        await kref.update({[fld]:Date.now()});   // stamped unless the send failed outright (it throws then): a failed send must not shut the teacher out for an hour
       }
     }catch(e){skip("queued reminder",r.id,e)}finally{await r.ref.delete().catch(e=>skip("queue delete",r.id,e))}
   }
