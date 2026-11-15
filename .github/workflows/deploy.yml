@@ -15,8 +15,12 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: npm ci --no-audit --no-fund
+      - run: npm test   # a failing test stops the deploy (the test workflow skips main, so this is the only run there)
       - run: python3 build.py
-      - run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/sa.json"
+      - name: write the service account key
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"   # through the environment: a quote inside the secret cannot break the command
       - run: npx --yes firebase-tools@15.34.0 deploy --only hosting,firestore:rules --project sahibi-quran --non-interactive
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json

@@ -7,4 +7,5 @@ export const PALETTES={
  burgundy:{ar:"عنابي",en:"Burgundy",v:{bg:"#f7eef0",surface:"#fffafb",surface2:"#f0dfe3",ink:"#2e1419",muted:"#7a5a61",accent:"#b8902f",accent2:"#7a1f35",line:"#ead3d9",star:"#c9a14a","on-accent":"#2e1419","on-primary":"#ffffff",hero:"#7a1f35","hero-ink":"#fff7f9",good:"#2f7d4f",mid:"#a87400",bad:"#c4422a"}},
  white:{ar:"أبيض بسيط",en:"Simple white",v:{bg:"#f5f6f5",surface:"#ffffff",surface2:"#eef1ef",ink:"#1b1f1d",muted:"#646c68",accent:"#0b7a55",accent2:"#0b7a55",line:"#e1e6e3",star:"#e0a020","on-accent":"#ffffff","on-primary":"#ffffff",hero:"#ffffff","hero-ink":"#1b1f1d",good:"#2f7d4f",mid:"#a87400",bad:"#c4422a"}}
 };
+Object.setPrototypeOf(PALETTES,null); // same as THEMES: a stored name like "constructor" must look up as undefined
 export const PALETTE_ORDER=["emerald","emeraldNight","night","sand","burgundy","white"];

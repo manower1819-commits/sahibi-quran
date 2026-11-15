@@ -407,3 +407,20 @@ body{-webkit-font-smoothing:antialiased}
   .item.weak{border:1px solid #c4422a}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+.addrev{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;background:var(--surface2);border-radius:12px;padding:8px 12px;margin-top:8px;font-size:14px}
+.addrev[hidden]{display:none}
+.cel-in p.cel-gift{color:#ffc93c;font-weight:700}
+.onb .cel-in p{line-height:1.7}
+.dots{display:flex;gap:6px}.dots i{width:8px;height:8px;border-radius:50%;background:#ffffff55}.dots i.on{background:#ffc93c}
+.weeknav .lbl small{display:block;font-size:12px}
+.rangerow>*{min-width:0}
+.rangerow select,.rangerow input{width:100%;font-size:16px;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:12px;padding:9px 8px}
+
+.qtext{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.3;margin:0 0 10px;text-align:justify}
+.qn{font-size:.8em;color:var(--muted);white-space:nowrap}
+.sheet .qline{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.2;margin:0;text-align:center;min-height:1.2em}
+.sheet-in h3{margin:6px 0 0;font-size:15px;color:var(--muted)}
+.qbasm{font-family:"Amiri Quran","Amiri",serif;font-size:26px;line-height:2.2;text-align:center;margin:8px 0 0}
+.warnc{color:var(--bad);font-weight:600}
+.remind-banner{display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--accent);color:var(--on-accent,#1c2421);border-radius:12px;padding:10px 12px;margin-bottom:8px;font-size:14px}
+.remind-banner .btn{flex:none}

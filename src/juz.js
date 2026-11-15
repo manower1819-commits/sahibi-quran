@@ -4,9 +4,10 @@ export const JUZ_START=[[1,1],[2,142],[2,253],[3,93],[4,24],[4,148],[5,82],[6,11
 const key=(s,a)=>s*1000+a;
 export function juzOf(s,a){let j=0;for(let i=0;i<30;i++)if(key(s,a)>=key(JUZ_START[i][0],JUZ_START[i][1]))j=i;return j}
 // ayat count of every juz, and how many of them the memorized surahs cover
-export function juzCoverage(surahs){
-  const tot=new Array(30).fill(0),got=new Array(30).fill(0),set=new Set(surahs);
-  for(let s=1;s<=114;s++)for(let a=1;a<=S[s-1][2];a++){const j=juzOf(s,a);tot[j]++;if(set.has(s))got[j]++}
+export function juzCoverage(surahs,ranges){
+  const tot=new Array(30).fill(0),got=new Array(30).fill(0),set=new Set(surahs||[]),rg={};
+  (ranges||[]).forEach(r=>{(rg[r[0]]||(rg[r[0]]=[])).push(r)});
+  for(let s=1;s<=114;s++)for(let a=1;a<=S[s-1][2];a++){const j=juzOf(s,a);tot[j]++;if(set.has(s)||(rg[s]&&rg[s].some(r=>a>=r[1]&&a<=r[2])))got[j]++}
   return tot.map((t,i)=>({juz:i+1,total:t,got:got[i],frac:got[i]/t}));
 }
 // surahs that start inside a given juz (for juz badges)
