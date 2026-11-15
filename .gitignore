@@ -3,3 +3,10 @@ jobs/node_modules/
 dist/
 .firebase/
 *.log
+# service-account keys, environment files and local backups of children's data must never be committed
+*adminsdk*.json
+*service-account*.json
+*serviceaccount*.json
+sahibi-backup-*.json
+.env
+.env.*
