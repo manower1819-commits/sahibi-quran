@@ -141,9 +141,13 @@ function renderKid(k){const m=modeOf(k);m==="adults"?renderAdult(k):m==="teens"?
 function maybeOnboard(k,m){
   if(prefs.onb)return;prefs.onb=1;savePrefs();
   if(m!=="kids"||childKid()||!k.created||Date.now()-k.created>2*864e5)return;
+  showTour();
+}
+function showTour(){
+  if(document.querySelector(".celebrate.onb"))return;
   let i=0;const ov=document.createElement("div");ov.className="celebrate onb";ov.setAttribute("role","dialog");ov.setAttribute("aria-modal","true");
   const draw=()=>{ov.innerHTML='<div class="cel-in"><h2>'+t("onb_t"+i)+'</h2><p>'+t("onb_p"+i)+'</p><div class="dots">'+[0,1,2].map(j=>'<i'+(j===i?' class="on"':'')+'></i>').join("")+'</div><button class="btn accent big" id="onbNext">'+t(i<2?"onb_next":"onb_go")+'</button>'+(i<2?'<button class="btn" id="onbSkip">'+t("onb_skip")+'</button>':'')+'</div>';
-    $("onbNext").onclick=()=>{if(i<2){i++;draw()}else ov.remove()};if($("onbSkip"))$("onbSkip").onclick=()=>ov.remove();$("onbNext").focus()};
+    const nx=ov.querySelector("#onbNext"),sk=ov.querySelector("#onbSkip");nx.onclick=()=>{if(i<2){i++;draw()}else ov.remove()};if(sk)sk.onclick=()=>ov.remove();nx.focus()};
   document.body.appendChild(ov);draw();
 }
 // update live parts without destroying inputs (path, stars, teacher rows)
@@ -722,8 +726,9 @@ function renderSettings(){
    '<section class="card"><h2 class="sh">'+ICONS.info+t("bk_title")+'</h2><p class="about">'+t("bk_t")+'</p><div class="row"><button class="btn" id="bkOut">'+t("bk_export")+'</button><button class="btn" id="bkIn">'+t("bk_import")+'</button></div><input type="file" id="bkFile" accept="application/json,.json" hidden><p class="msg" id="bkMsg"></p><div id="bkConf"></div></section>'+
    (hasLocal?'<section class="card"><button class="btn" id="imp">'+t("import_local")+'</button><p class="msg ok" id="impMsg"></p></section>':''))+
    '<section class="card"><h2 class="sh">'+ICONS.user+t("account")+'</h2><p class="about" dir="ltr">'+esc(ST.user.email)+'</p><div class="row"><button class="btn" id="sOut">'+t("signout")+'</button>'+(ck?'':'<button class="btn" id="sDel">'+t("delacc")+'</button>')+'</div><p class="msg err" id="sMsg"></p></section>'+
-   '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><p class="hint">'+t("audio_src")+'</p><p class="hint">'+tanzilLine()+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
+   '<section class="card"><h2 class="sh">'+ICONS.info+t("about")+'</h2><p class="about">'+t("about_t")+'</p><a class="btn" href="privacy.html" target="_blank" rel="noopener" style="align-self:flex-start">'+t("privacy")+'</a><button class="btn" id="sTour" style="align-self:flex-start">'+t("tour_btn")+'</button><p class="hint">'+t("audio_src")+'</p><p class="hint">'+tanzilLine()+'</p><div class="devby"><span class="hint">'+t("dev_by")+'</span><img src="'+__DEV_LOGO__+'" alt="'+(L()==="en"?"Mohamed Anwar":"محمد أنور")+'" width="280" height="'+Math.round(280*__DEV_LOGO_H__/560)+'"><p class="copy">'+t("copyright")+'</p></div></section>'+demoNote();
   $("sDone").onclick=()=>{gateOk=false;go("main");scrollToday()};
+  $("sTour").onclick=showTour;
   if($("cdOff"))$("cdOff").onclick=async()=>{const kid=prefs.child&&prefs.child.kid;if(kid)await quick(D.disablePush({kidId:kid}));prefs.child=null;savePrefs();renderSettings()};
   $("nOn").onclick=async()=>{const m=$("nMsg");m.className="msg";try{const r=await D.enablePush(ck?{kidId:ck.id}:{});fillStat();m.className="msg "+(r==="ok"?"ok":"err");m.textContent=t({ok:"notif_ok",denied:"notif_denied",unsupported:"notif_unsupported","ios-home":"notif_ios",demo:"notif_demo"}[r]||"err_generic")}catch(e){m.className="msg err";m.textContent=t("err_generic")}};
   const fillStat=()=>{const sup="Notification" in window&&"serviceWorker" in navigator,perm=sup?Notification.permission:"unsupported",
