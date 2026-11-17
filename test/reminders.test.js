@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import Module from "node:module";
+import {encode, decode} from "../src/codec.js";
 
 const NOW = Date.UTC(2026, 10, 10, 12, 0, 0); // a Tuesday, 12:00 UTC
 
@@ -450,4 +451,98 @@ test("parts of 500: a dead token far into the list is matched to the right devic
   assert.equal(r.sent.length, 700); assert.ok(r.sent.includes("T0") && !r.sent.includes("T700") && r.sent.includes("T1100"));
   assert.deepEqual([r.result.attempts, r.result.failed], [1, 0]);
   assert.equal(store.users.p.lastRemind, "2026-11-10");
+});
+
+/* ---------- a flexible plan has rest days: no reminder is sent for them ---------- */
+/* tpl({2: list}) -> seven lists (index = weekday); wk({"2026-11-07": {2: list|null}}) -> weeks of their own (see src/planner.js) */
+const tpl7 = o => [0, 1, 2, 3, 4, 5, 6].map(i => (o && o[i]) || []);
+const wk7 = o => Object.entries(o || {}).map(([w, days]) => ({w, d: [0, 1, 2, 3, 4, 5, 6].map(i => (days && days[i] !== undefined ? days[i] : null))}));
+/* As Firestore holds it: the app writes through encode (an array inside an array is wrapped as {_a:[...]}), and the job reads the documents as stored. */
+const manualPlanOf = (t, w, ws = 6) => ({surahs: [1, 112], manual: encode({ws, tpl: tpl7(t), wk: wk7(w)})});
+const manualPlainOf = (t, w, ws = 6) => ({surahs: [1, 112], manual: {ws, tpl: tpl7(t), wk: wk7(w)}});
+
+test("a rest day of a flexible plan: no parent reminder; a day with a wird, or a plan with no flexible part, still reminds", async () => {
+  // NOW is Tuesday 2026-11-10 (weekday 2); its week (Saturday start) began on 2026-11-07
+  const kid = extra => Object.assign({name: "أ", parentUid: "p"}, extra);
+  const man = manualPlanOf;
+  const run = async (k, days = {}, halaqas = {}) => runJob({users: {p: {remindAt: DUE, offset: 0, tokens: ["T"]}}, kids: {k}, days, halaqas, reminders: {}});
+  assert.equal((await run(kid(man({2: [[112, 1, 4]]})))).sent.length, 1, "Tuesday has a wird: reminded");
+  assert.equal((await run(kid(man({3: [[112, 1, 4]]})))).sent.length, 0, "Tuesday is not in the template: a rest day");
+  assert.equal((await run(kid(man({2: []})))).sent.length, 0, "an empty list is a rest day");
+  assert.equal((await run(kid(man({2: [[112, 1, 4]]}, {"2026-11-07": {2: []}})))).sent.length, 0, "the week of its own makes it a rest day (week of Sat 2026-11-07)");
+  assert.equal((await run(kid(man({2: []}, {"2026-11-07": {2: [[112, 1, 4]]}})))).sent.length, 1, "the week of its own gives it a wird");
+  assert.equal((await run(kid(man({2: []}, {"2026-11-07": {2: null}})))).sent.length, 0, "null follows the template, which says rest");
+  assert.equal((await run(kid(man({2: [[112, 1, 4]]}, {"2026-11-07": {2: null}})))).sent.length, 1, "null follows the template, which asks something");
+  assert.equal((await run(kid(man({2: [[112, 1, 4]]}, {"2026-11-14": {2: []}})))).sent.length, 1, "another week's entry does not matter");
+  assert.equal((await run(kid(man({3: [[112, 1, 4]]})), {"k/2026-11-10": {items: encode({items: [[112, 1, 4]]}).items}})).sent.length, 1, "a day with items of its own is not a rest day");
+  assert.equal((await run(kid(man({3: [[112, 1, 4]]})), {"k/2026-11-10": {items: [], notes: "x"}})).sent.length, 0, "a record of a rest day (items: [], written when something is noted that day) is still a rest day");
+  assert.equal((await run(kid(man({2: [[112, 1, 4]]})), {"k/2026-11-10": {items: []}})).sent.length, 0, "a day that carries an empty list is what the app shows: a rest day, even if the plan was changed after it was written");
+  assert.equal((await run(kid({surahs: [1, 112], algo: 2, start: "2026-11-04"}), {"k/2026-11-10": {items: []}})).sent.length, 1, "an automatic plan is not changed by this: an empty list there still reminds, as before");
+  assert.equal((await run(kid(Object.assign(man({3: [[112, 1, 4]]}), {halaqaId: "h", teacherUid: "t"})), {}, {})).sent.length, 0, "a class that cannot be found: the child's own flexible plan decides");
+  assert.ok(encode({items: [[112, 1, 4]]}).items[0]._a, "the test data is really in the stored (encoded) form");
+  assert.equal((await run(kid({surahs: [1, 112], algo: 2, start: "2026-11-04"}))).sent.length, 1, "an automatic plan always reminds, as before");
+  assert.equal((await run(kid({surahs: [1, 112]}))).sent.length, 1, "a plan without algo reminds, as before");
+  // the teacher's plan for the student decides, not the child's own
+  const h = {h: {name: "حلقة", teacherUid: "t", studentPlans: {k: man({3: [[112, 1, 4]]})}}};
+  assert.equal((await run(kid(Object.assign(man({2: [[112, 1, 4]]}), {halaqaId: "h", teacherUid: "t"})), {}, h)).sent.length, 0, "the teacher's flexible plan says rest");
+  // a class whose document is gone falls back to the child's own flexible plan
+  assert.equal((await run(kid(Object.assign(man({3: [[112, 1, 4]]}), {halaqaId: "gone"})))).sent.length, 0, "no class document: the child's own plan");
+});
+
+test("a rest day of a flexible plan is neither done nor missing in the teacher's summary", async () => {
+  const man = t => manualPlanOf(t);
+  const store = extra => Object.assign({
+    users: {t: {summaryAt: DUE, offset: 0, tokens: ["T-T"], lang: "ar"}},
+    halaqas: {h1: {name: "الأولى", teacherUid: "t", studentPlans: {a: man({2: [[112, 1, 4]]}), b: man({3: [[112, 1, 4]]}), c: man({3: [[112, 1, 4]]})}}},
+    kids: {a: {name: "أحمد", teacherUid: "t", halaqaId: "h1"}, b: {name: "بسمة", teacherUid: "t", halaqaId: "h1"}, c: {name: "جابر", teacherUid: "t", halaqaId: "h1"}},
+    days: {}, reminders: {},
+  }, extra);
+  let r = await runJob(store());
+  let m = r.messages.filter(x => x.token === "T-T" && !x.link.startsWith("/?hreport="));
+  assert.equal(m.length, 1);
+  assert.ok(m[0].body.includes("أحمد") && !m[0].body.includes("بسمة") && !m[0].body.includes("جابر"), "only the student who is asked today can be missing: " + m[0].body);
+  assert.ok(m[0].body.includes("1"), "the count is out of the students asked today (one), not all three: " + m[0].body);
+  assert.ok(!m[0].body.includes("3"), "not out of all three: " + m[0].body);
+  // everyone is on a rest day: no summary at all
+  r = await runJob(store({halaqas: {h1: {name: "الأولى", teacherUid: "t", studentPlans: {a: man({3: [[112, 1, 4]]}), b: man({3: [[112, 1, 4]]}), c: man({3: [[112, 1, 4]]})}}}}));
+  assert.deepEqual(r.messages.filter(x => x.token === "T-T" && !x.link.startsWith("/?hreport=")), []);
+});
+
+test("the job and the app agree on which days of a flexible plan are rest days, and on the weekday its weeks begin", async () => {
+  const {manualItems, planWeekStart: appWs} = await import("../src/planner.js");
+  const saved = Module._load; Module._load = function (req, ...rest) { return req === "firebase-admin" ? makeAdmin({}).admin : saved.call(this, req, ...rest); };
+  process.env.FIREBASE_SERVICE_ACCOUNT = "{}";
+  let rule, jobWs;
+  try { const mod = Module.createRequire(import.meta.url); delete mod.cache[mod.resolve("../jobs/reminders.js")]; const j = mod("../jobs/reminders.js"); rule = j.manualRest; jobWs = j.planWeekStart; } finally { Module._load = saved; }
+  const plans = [
+    undefined, null, {}, {manual: null}, {manual: []}, {manual: "x"}, {manual: {}}, {manual: {tpl: []}}, {manual: {tpl: {2: [[112, 1, 4]]}}},
+    manualPlanOf({0: [[1, 1, 7]], 3: [[112, 1, 4]], 6: []}),
+    manualPlanOf({0: [[1, 1, 7]], 3: [[112, 1, 4]]}, {"2026-11-08": {3: [], 4: [[2, 1, 5]]}}, 0),
+    manualPlanOf({2: [[112, 1, 4]]}, {"2026-11-07": {2: []}, "2026-11-14": {2: [[2, 1, 5]]}}),
+    manualPlanOf({2: [[112, 1, 4]]}, {"2026-11-07": {2: null}}),
+    manualPlanOf({2: [[112, 1, 4]]}, {}, 9), manualPlanOf({2: [[1, 1, 9999]]}), manualPlanOf({2: [[200, 1, 2]]}), {manual: {ws: 6, tpl: ["x", "x", "x"]}},
+    {manual: {ws: 6, tpl: tpl7({2: [[112, 1, 4]]}), wk: [{w: "2026-11-07", d: [null, null, [], null, null, null, null]}, {w: "2026-11-07", d: [null, null, [[2, 1, 5]], null, null, null, null]}]}},
+  ];
+  for (let i = 0; i < 21; i++) {
+    const date = new Date(Date.UTC(2026, 10, 1 + i)).toISOString().slice(0, 10);
+    for (const p of plans) {
+      const dp = p && p.manual && typeof p.manual === "object" && !Array.isArray(p.manual) ? {...p, manual: decode(p.manual)} : p;   // the app reads the decoded form; the job is given what Firestore holds
+      const asked = manualItems(dp, date).length > 0, restJob = rule(p, date);
+      if (p && p.manual && typeof p.manual === "object" && !Array.isArray(p.manual)) {
+        // the job calls a day a rest day when nothing at all is listed; where the app finds nothing usable inside a surah (an ayah past its end) the job still reminds, which is harmless
+        if (asked) assert.equal(restJob, false, JSON.stringify(p) + " " + date + ": the app asks something, so the job must not call it a rest day");
+      } else assert.equal(restJob, false, JSON.stringify(p) + " " + date + ": not a flexible plan: never a rest day");
+    }
+  }
+  assert.equal(rule(manualPlanOf({2: [[112, 1, 4]]}), "2026-11-10"), false);
+  assert.equal(rule(manualPlanOf({3: [[112, 1, 4]]}), "2026-11-10"), true);
+  for (const p of plans) for (const fb of [0, 1, 6]) assert.equal(jobWs(p, fb), appWs(p && p.manual && typeof p.manual === "object" && !Array.isArray(p.manual) ? {...p, manual: decode(p.manual)} : p, fb), JSON.stringify(p) + " fallback " + fb);
+  // the same plans in the decoded form (what the app holds) give the same answers in the job
+  for (const p of plans) for (let i = 0; i < 21; i += 4) {
+    const date = new Date(Date.UTC(2026, 10, 1 + i)).toISOString().slice(0, 10), plain = p && p.manual && typeof p.manual === "object" && !Array.isArray(p.manual) ? {...p, manual: decode(p.manual)} : p;
+    assert.equal(rule(plain, date), rule(p, date), JSON.stringify(p) + " " + date + ": the job reads the stored and the decoded form alike");
+  }
+  assert.equal(rule(manualPlainOf({3: [[112, 1, 4]]}), "2026-11-10"), true);
+  assert.equal(rule(manualPlainOf({2: [[112, 1, 4]]}), "2026-11-10"), false);
+  assert.equal(jobWs(manualPlanOf({}, {}, 0), 6), 0);
 });
