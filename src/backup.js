@@ -3,6 +3,7 @@
 import {S} from "./surahs.js";
 import {THEME_ORDER} from "./themes.js";
 import {PALETTE_ORDER} from "./palettes.js";
+import {cleanManual, manualPool} from "./planner.js";
 
 export const BACKUP_APP = "sahibi-quran";
 export const BACKUP_VERSION = 1;
@@ -45,6 +46,11 @@ export function cleanKid(o) {
     self: o.self === true, look: int(o.look, 0, 50) || 0, skin: int(o.skin, 0, 20) == null ? 1 : int(o.skin, 0, 20),
   };
   if (Number(o.algo) === 2) { k.algo = 2; k.light = -1; }
+  // a flexible plan (what is reviewed on each weekday) is rebuilt from the file; one with nothing usable in it is left out, so the child keeps the surahs it came with
+  if (o.manual && typeof o.manual === "object" && !Array.isArray(o.manual)) {
+    const m = cleanManual(o.manual), pool = manualPool(m);
+    if (pool.surahs.length || pool.ranges.length) { k.manual = m; k.surahs = pool.surahs; k.ranges = pool.ranges; k.cycle = 1; k.light = -1; k.algo = 0; }
+  }
   if (PALETTE_ORDER.includes(o.palette)) k.palette = o.palette;
   if (int(o.age, 3, 99) != null) k.age = int(o.age, 3, 99);
   if (["kids", "teens", "adults"].includes(o.mode)) k.mode = o.mode;
