@@ -1,5 +1,5 @@
 import {S} from "./surahs.js";
-import {pad,iso,parse,addDays,diffDays,weekOfWs,weekOfPlan,planStamp,clampStart,giftStats,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,pageSegments,itemPageList,itemAyat,itemPages} from "./planner.js";
+import {pad,iso,parse,addDays,diffDays,weekOfWs,weekOfPlan,planStamp,clampStart,giftStats,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,pageSegments,itemPageList,itemAyat,itemPages,isManual,manualWs,manualWeek,manualPlan,manualStamp,cleanItems} from "./planner.js";
 import {I,DAYS,DSHORT} from "./i18n.js";
 import {STAR,LOGO,THEMES,THEME_ORDER,giftSvg,ICON_GEAR,ICON_BACK} from "./themes.js";
 import {createFakeBackend} from "./backend-fake.js";
@@ -290,7 +290,7 @@ function makeDayCard(k,date,i,w,teacherMode,variant){
   const askBox=el.querySelector(".addrev");
   function askAdd(){
     if(!askBox)return;askBox.hidden=true;askBox.innerHTML="";
-    const kk=ST.kids[k.id];if(teacherMode||childKid()||!kk||teacherPlanOf(kk))return;
+    const kk=ST.kids[k.id];if(teacherMode||childKid()||!kk||teacherPlanOf(kk)||isManual(kk))return;
     const rr=day(k,date)||{},n=+rr.nS,f=+rr.nF,to=+rr.nT;
     if(!n||!(f>=1)||!(to>=f)||to>S[n-1][2])return;
     const key=[k.id,date,n,f,to].join(":");
@@ -410,7 +410,7 @@ function reminderBanner(){
   const P=ST.profile;if(childKid()||!P.remindAt||prefs.remDay===today())return "";
   const now=new Date(),hm=String(P.remindAt).split(":").map(Number);
   if(now.getHours()*60+now.getMinutes()<hm[0]*60+hm[1])return "";
-  const td=today(),miss=kidsList().filter(k=>!(+((day(k,td)||{}).stars||0)>0));
+  const td=today(),miss=kidsList().filter(k=>!(+((day(k,td)||{}).stars||0)>0)&&!(isManual(effPlan(k))&&planFor(k,td).length===0));   // a rest day of a flexible plan is not reminded
   if(!miss.length)return "";
   return '<div class="remind-banner" role="status"><span>'+t("rem_banner",miss.map(k=>esc(k.name)).join("، "))+'</span><button type="button" class="btn small" id="remDis">'+t("rem_dis")+'</button></div>';
 }
@@ -591,7 +591,7 @@ function renderTeachHome(){
   const hs=halaqaList();hs.forEach(h=>D.subStudents(h.id));const td=today();
   app.innerHTML=topbar()+'<h1 class="pagetitle">'+t("myhalaqas")+'</h1>'+
    hs.map(h=>{const st=Object.values(ST.students[h.id]||{}),dn=st.filter(k=>+((day(k,td)||{}).stars||0)>0).length;
-     return '<button class="card hcard" data-h="'+h.id+'"><span class="hrow"><b>'+esc(h.name)+'</b><span class="codechip" dir="ltr">'+esc(h.code)+'</span></span><span class="hint">'+t("students")+': '+st.length+' · '+t("today")+': '+t("done_n",dn,st.length)+'</span>'+((ST.requests[h.id]||[]).length?'<span class="hint warnc">'+t("req_n",(ST.requests[h.id]||[]).length)+'</span>':'')+'<span class="hint">'+(planHas(h.plan)?t("plan")+': '+t("selected",planSurahCount(h.plan))+' · '+cycleLbl(h.plan.cycle):t("plan_none"))+'</span></button>'}).join("")+
+     return '<button class="card hcard" data-h="'+h.id+'"><span class="hrow"><b>'+esc(h.name)+'</b><span class="codechip" dir="ltr">'+esc(h.code)+'</span></span><span class="hint">'+t("students")+': '+st.length+' · '+t("today")+': '+t("done_n",dn,st.length)+'</span>'+((ST.requests[h.id]||[]).length?'<span class="hint warnc">'+t("req_n",(ST.requests[h.id]||[]).length)+'</span>':'')+'<span class="hint">'+(planHas(h.plan)?t("plan")+': '+t("selected",planSurahCount(h.plan))+' · '+(isManual(h.plan)?t("wm_man"):cycleLbl(h.plan.cycle)):t("plan_none"))+'</span></button>'}).join("")+
    '<button class="btn accent" id="newH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button>'+demoNote();
   bindTop();
   app.querySelectorAll("[data-h]").forEach(b=>b.onclick=()=>{hDate=null;go("halaqa",{hid:b.dataset.h})});
@@ -602,9 +602,10 @@ let hFilter="all";
 function renderHalaqa(h){
   applyTheme(null);D.subStudents(h.id);
   const td=today(),date=hDate||td,all=Object.values(ST.students[h.id]||{}).sort((a,b)=>a.name.localeCompare(b.name,"ar"));
-  const isDone=k=>+((day(k,date)||{}).stars||0)>0,dn=all.filter(isDone).length,notN=all.length-dn;
-  const st=hFilter==="not"?all.filter(k=>!isDone(k)):all;
-  const C=2*Math.PI*30,frac=all.length?dn/all.length:0;
+  const isDone=k=>+((day(k,date)||{}).stars||0)>0,isRest=k=>!isDone(k)&&isManual(effPlan(k))&&planFor(k,date).length===0;   // a rest day exists only in a flexible plan
+  const dn=all.filter(isDone).length,total=all.filter(k=>!isRest(k)).length,notN=total-dn;   // students on a rest day (a flexible plan) are not counted
+  const st=hFilter==="not"?all.filter(k=>!isDone(k)&&!isRest(k)):all;
+  const C=2*Math.PI*30,frac=total?dn/total:0;
   // most-missed surahs this week (home + class marks)
   const w=weekOfH(h,date),miss={};all.forEach(k=>{for(let i=0;i<7;i++){const r=day(k,addDays(w,i));if(!r)continue;new Set([...(r.weak||[]),...(r.tWeak||[])]).forEach(n=>miss[n]=(miss[n]||0)+1)}});
   const top=Object.entries(miss).sort((a,b)=>b[1]-a[1]).slice(0,5);
@@ -614,8 +615,8 @@ function renderHalaqa(h){
   const wset=[...new Set(all.map(k=>JSON.stringify(wmap[k.id])))],oneW=wset.length===1&&wmap[all[0].id].length?wmap[all[0].id]:null;
   app.innerHTML=topbar()+
    '<header class="bhead thead"><div class="bh-row"><div class="bh-name"><span>'+t("myhalaqas")+'</span><b>'+esc(h.name)+'</b></div><button class="codechip big" id="hCopy" dir="ltr" aria-label="'+t("copy")+'">'+esc(h.code)+'</button></div>'+
-   '<div class="row"><svg width="74" height="74" viewBox="0 0 74 74" role="img" aria-label="'+t("done_n",dn,all.length)+'"><circle cx="37" cy="37" r="30" fill="none" stroke="#0a3b33" stroke-width="8"/><circle cx="37" cy="37" r="30" fill="none" stroke="#d4a23a" stroke-width="8" stroke-dasharray="'+(C*frac).toFixed(1)+' '+C.toFixed(1)+'" stroke-linecap="round" transform="rotate(-90 37 37)"/><text x="37" y="42" text-anchor="middle" font-size="16" font-weight="700" fill="#fbf8f1">'+dn+'/'+all.length+'</text></svg>'+
-   '<div class="col"><b>'+t("done_n",dn,all.length)+'</b><span class="hint lt">'+(P.summaryAt?t("summary_at_hint",P.summaryAt):t("summary_off"))+'</span><span class="msg ok lt" id="hCMsg"></span></div></div></header>'+
+   '<div class="row"><svg width="74" height="74" viewBox="0 0 74 74" role="img" aria-label="'+t("done_n",dn,total)+'"><circle cx="37" cy="37" r="30" fill="none" stroke="#0a3b33" stroke-width="8"/><circle cx="37" cy="37" r="30" fill="none" stroke="#d4a23a" stroke-width="8" stroke-dasharray="'+(C*frac).toFixed(1)+' '+C.toFixed(1)+'" stroke-linecap="round" transform="rotate(-90 37 37)"/><text x="37" y="42" text-anchor="middle" font-size="16" font-weight="700" fill="#fbf8f1">'+dn+'/'+total+'</text></svg>'+
+   '<div class="col"><b>'+t("done_n",dn,total)+'</b><span class="hint lt">'+(P.summaryAt?t("summary_at_hint",P.summaryAt):t("summary_off"))+'</span><span class="msg ok lt" id="hCMsg"></span></div></div></header>'+
    '<div class="row between"><button class="btn" id="hBack">'+t("myhalaqas")+'</button><button class="btn primary" id="hInv">'+t("invite")+'</button><button class="btn accent" id="hRepB">'+t("week_report")+'</button><button class="btn" id="hSet">'+t("hsettings")+'</button></div>'+
    '<div class="weeknav"><button class="btn" id="dPrev">'+t("prev")+'</button><span class="lbl">'+DAYS[L()][parse(date).getDay()]+'<b>'+niceH(date)+'</b></span><button class="btn" id="dNext">'+t("next")+'</button></div>'+
    (date===td?'':'<button class="btn accent" id="dNow" style="align-self:center">'+t("today")+'</button>')+
@@ -623,8 +624,8 @@ function renderHalaqa(h){
    (oneW?'<section class="card"><div class="row between"><h2>'+t("today_wird")+'</h2><span class="hint">'+amt(oneW)+'</span></div><div class="items">'+oneW.map(it=>'<span class="item">'+itemLabel(it)+'</span>').join("")+'</div></section>':'')+
    '<section class="card"><div class="row between"><h2>'+t("students")+'</h2><div class="seg" id="hFil"><button data-v="all" aria-pressed="'+(hFilter==="all")+'">'+t("filter_all")+'</button><button data-v="not" aria-pressed="'+(hFilter==="not")+'">'+t("filter_not",notN)+'</button></div></div>'+
    (all.length?'<ul class="list srows">'+st.map(k=>{const r=day(k,date)||{},hs=+(r.stars||0),ok=hs>0;
-     return '<li class="srow"><div class="sname"><span class="art s">'+avatar(k.look||0,k.skin==null?1:k.skin,{head:true})+'</span><span class="t"><button class="linkbtn" data-open="'+k.id+'">'+esc(k.name)+'</button><span class="hint '+(ok?"okc":"badc")+'">'+(ok?'✓ '+t("home_done")+' '+starsRO(hs):'✗ '+t("home_not"))+'</span>'+(!oneW&&wmap[k.id].length?'<span class="hint">'+t("wird_lbl")+': '+wtxt(wmap[k.id])+'</span>':'')+'</span></div>'+
-       '<div class="sact">'+starRow("t mini",t("tstars")).replace('class="stars','data-k="'+k.id+'" class="stars')+(!ok&&date===td?'<button class="btn small primary" data-rem="'+k.id+'"'+(reminded[k.id+date]?' disabled':'')+'>'+(reminded[k.id+date]?t("reminded"):t("remind"))+'</button>':'')+'<button class="btn small" data-rm="'+k.id+'">'+t("remove_st")+'</button></div></li>'}).join("")+'</ul>':'<p class="empty">'+t("no_students")+'</p>')+'</section>'+
+     return '<li class="srow"><div class="sname"><span class="art s">'+avatar(k.look||0,k.skin==null?1:k.skin,{head:true})+'</span><span class="t"><button class="linkbtn" data-open="'+k.id+'">'+esc(k.name)+'</button><span class="hint '+(ok?"okc":isRest(k)?"":"badc")+'">'+(ok?'✓ '+t("home_done")+' '+starsRO(hs):isRest(k)?t("wm_rest"):'✗ '+t("home_not"))+'</span>'+(!oneW&&wmap[k.id].length?'<span class="hint">'+t("wird_lbl")+': '+wtxt(wmap[k.id])+'</span>':'')+'</span></div>'+
+       '<div class="sact">'+starRow("t mini",t("tstars")).replace('class="stars','data-k="'+k.id+'" class="stars')+(!ok&&!isRest(k)&&date===td?'<button class="btn small primary" data-rem="'+k.id+'"'+(reminded[k.id+date]?' disabled':'')+'>'+(reminded[k.id+date]?t("reminded"):t("remind"))+'</button>':'')+'<button class="btn small" data-rm="'+k.id+'">'+t("remove_st")+'</button></div></li>'}).join("")+'</ul>':'<p class="empty">'+t("no_students")+'</p>')+'</section>'+
    (all.length?'<section class="card"><h3>'+t("top_mistakes")+'</h3>'+(top.length?'<div class="items">'+top.map(([n,c])=>'<span class="item weak">'+esc(sName(+n))+'<small>'+c+'</small></span>').join("")+'</div>':'<p class="empty">'+t("no_mistakes")+'</p>')+'</section>':'')+demoNote();
   bindTop();
   $("hBack").onclick=()=>go("main");$("hSet").onclick=()=>openHEdit(h.id);$("hRepB").onclick=()=>go("hreport",{hid:h.id});
@@ -647,20 +648,21 @@ function renderHalaqa(h){
 }
 function studentPlanCard(k,h){
   const sp=(h.studentPlans||{})[k.id],has=planHas(sp);
-  return '<section class="card"><h3>'+t("sp_t")+'</h3><p class="about">'+(has?t("sp_has",planSurahCount(sp),cycleLbl(sp.cycle)):t(planHas(h.plan)?"sp_none":"sp_none_noplan"))+'</p><div class="row"><button class="btn" id="spEdit">'+t(has?"sp_edit":"sp_set")+'</button>'+(has?'<button class="btn" id="spOff">'+t("sp_off")+'</button>':'')+'</div></section>';
+  return '<section class="card"><h3>'+t("sp_t")+'</h3><p class="about">'+(has?(isManual(sp)?t("wm_sp_has",planSurahCount(sp)):t("sp_has",planSurahCount(sp),cycleLbl(sp.cycle))):t(planHas(h.plan)?"sp_none":"sp_none_noplan"))+'</p><div class="row"><button class="btn" id="spEdit">'+t(has?"sp_edit":"sp_set")+'</button>'+(has?'<button class="btn" id="spOff">'+t("sp_off")+'</button>':'')+'</div></section>';
 }
 function renderSEdit(k,h){
   applyTheme(null);const d=draft;
   app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t("sp_t")+'</span><button class="iconbtn" id="eBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div>'+
-   '<section class="card"><h2>'+esc(k.name)+'</h2><p class="about">'+t("sp_about")+'</p></section>'+planSection(d._p)+
+   '<section class="card"><h2>'+esc(k.name)+'</h2><p class="about">'+t("sp_about")+'</p></section>'+manualCard(d._p)+(d._p._mode==="manual"?'':planSection(d._p))+
    '<p class="msg err" id="eMsg"></p><div class="row"><button class="btn primary big" id="eSave">'+t("save")+'</button><button class="btn big" id="eCancel">'+t("cancel")+'</button></div>';
-  bindPlan(d._p);
+  bindManual(d._p,()=>renderSEdit(k,h));if(d._p._mode!=="manual")bindPlan(d._p);
   const leave=()=>{draft=null;go("student",{hid:h.id,kid:k.id})};
   $("eBack").onclick=leave;$("eCancel").onclick=leave;
-  $("eSave").onclick=async()=>{if(!planHas(d._p)){$("eMsg").textContent=t("surah_req");return}
+  $("eSave").onclick=async()=>{const prev=(h.studentPlans||{})[k.id],pf=planFields(d._p,prev);
+    if(!pf||!planHas(pf)){$("eMsg").textContent=t(d._p._mode==="manual"?"wm_need":"surah_req");return}
     $("eSave").disabled=true;
-    try{const prev=(h.studentPlans||{})[k.id];
-      const np={surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,...planStamp(prev,d._p,today(),weekOf(today())),weekStart:WS()};
+    try{
+      const np={...pf,weekStart:WS()};
       await D.saveHalaqa(Object.assign({},h,{studentPlans:Object.assign({},h.studentPlans||{},{[k.id]:np})}));leave()}
     catch(e){$("eSave").disabled=false;$("eMsg").textContent=t("err_generic")}};
 }
@@ -674,7 +676,8 @@ function renderStudent(k,h){
   $("sBack").onclick=()=>go("halaqa",{hid:h.id});
   $("toggleView").onclick=()=>go("shist",{hid:h.id,kid:k.id});
   $("spEdit").onclick=()=>{const sp=(h.studentPlans||{})[k.id],src=planHas(sp)?sp:planHas(h.plan)?h.plan:null;
-    draft={_p:src?{surahs:(src.surahs||[]).slice(),ranges:(src.ranges||[]).map(r=>r.slice()),cycle:src.cycle||1}:{surahs:[],ranges:[],cycle:1}};go("sedit",{hid:h.id,kid:k.id})};
+    draft={_p:src?Object.assign({surahs:(src.surahs||[]).slice(),ranges:(src.ranges||[]).map(r=>r.slice()),cycle:src.cycle||1},isManual(src)?{manual:JSON.parse(JSON.stringify(src.manual))}:{}):{surahs:[],ranges:[],cycle:1}};
+    manInit(draft._p,sp);go("sedit",{hid:h.id,kid:k.id})};
   if($("spOff")){let armed=false;$("spOff").onclick=async()=>{if(!armed){armed=true;$("spOff").className="btn warn";$("spOff").textContent=t("del2");return}
     try{await D.saveHalaqa(Object.assign({},h,{studentPlans:Object.assign({},h.studentPlans||{},{[k.id]:null})}));render()}catch(e){armed=false;$("spOff").className="btn";$("spOff").textContent=t("err_generic")}}}
   $("wPrev").onclick=()=>{weekView=addDays(w,-7);render()};$("wNext").onclick=()=>{weekView=addDays(w,7);render()};
@@ -717,7 +720,7 @@ function renderSettings(){
    '<section class="card"><h2 class="sh">'+ICONS.bell+t("notif")+'</h2><button class="btn primary" id="nOn" style="align-self:flex-start">'+t("notif_on")+'</button><p class="msg" id="nMsg"></p><div class="hint" id="nStat"></div><button type="button" class="btn" id="nTest" style="align-self:flex-start">'+t("nt_btn")+'</button>'+
     (ck?'':'<label class="field"><span class="sec-t">'+t("remind_at")+'</span><select id="remAt">'+timeOptions(P.remindAt||"")+'</select></label>'+(halaqaList().length?'<label class="field"><span class="sec-t">'+t("summary_at")+'</span><select id="sumAt">'+timeOptions(P.summaryAt||"")+'</select></label>':''))+'</section>'+
    (ck?'':
-   '<section class="card"><h2 class="sh">'+ICONS.people+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",planSurahCount(effPlan(k)))+' · '+cycleLbl(effPlan(k).cycle||1))+((ST.joins[k.id]||{}).status==="pending"?' · '+t("join_pending_short"):'')+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
+   '<section class="card"><h2 class="sh">'+ICONS.people+t("kids")+'</h2>'+kidsList().map(k=>'<div class="kidrow">'+(modeOf(k)==="adults"?LOGO:avatar(k.look||0,k.skin==null?1:k.skin))+'<span class="t"><b>'+esc(k.name)+'</b><small>'+(halaqaOf(k)?t("joined",esc(halaqaOf(k).name)):t("selected",planSurahCount(effPlan(k)))+' · '+(isManual(effPlan(k))?t("wm_man"):cycleLbl(effPlan(k).cycle||1)))+((ST.joins[k.id]||{}).status==="pending"?' · '+t("join_pending_short"):'')+'</small></span><button class="btn" data-ed="'+k.id+'">'+t("edit_kid")+'</button></div>').join("")+'<div class="row"><button class="btn accent" id="sAdd">+ '+t("add_kid")+'</button>'+(kidsList().some(x=>x.self)?'':'<button class="btn" id="sAddSelf">+ '+t("add_self")+'</button>')+'</div></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.people+t("co_join_t")+'</h2><p class="about">'+t("co_join_p")+'</p><div class="row"><input id="coCode" class="codein" dir="ltr" maxlength="8" placeholder="'+t("co_code")+'" autocomplete="off"><button class="btn primary" id="coGo">'+t("co_join")+'</button></div><p class="msg" id="coJMsg"></p></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.book+t("myhalaqas")+'</h2>'+(halaqaList().length?halaqaList().map(h=>'<div class="kidrow"><span class="t"><b>'+esc(h.name)+'</b><small dir="ltr">'+esc(h.code)+'</small></span><button class="btn" data-he="'+h.id+'">'+t("edit_kid")+'</button></div>').join(""):'<p class="about">'+t("teach_t")+'</p>')+'<button class="btn accent" id="sAddH" style="align-self:flex-start">+ '+t("new_halaqa")+'</button></section>'+
    '<section class="card"><h2 class="sh">'+ICONS.palette+t("appearance")+'</h2><p class="about">'+t("appearance_t")+'</p>'+paletteGrid("sPal",appTheme(),false)+'</section>'+
@@ -821,11 +824,113 @@ function bindPlan(d){
   $("eSearch").oninput=e=>{const q=e.target.value.trim().toLowerCase();$("ePick").querySelectorAll(".pk").forEach(r=>r.hidden=!!q&&r.dataset.q.indexOf(q)<0)};
 }
 
+/* ================= flexible wird (what is reviewed on each day of the week) =================
+   The plan draft `d` (a child's draft, a student's plan, or a class plan) gets: _mode "auto"|"manual", _man (the manual object being edited, see
+   src/planner.js), _scope "tpl"|"wk" (the weekly template that repeats, or one week of its own), _mw (first day of the week being edited), _mday
+   (the weekday whose surahs are open for choosing). Nothing is stored until the page is saved (planFields). */
+const manStr=it=>sName(it[0])+((it[1]>1||it[2]<S[it[0]-1][2])?' '+it[1]+'–'+it[2]:'');
+function manInit(d,prev){
+  d._prev=prev||null;d._mode=isManual(d)?"manual":"auto";d._man=isManual(d)?JSON.parse(JSON.stringify(d.manual)):null;
+  d._scope="tpl";d._mw=weekOf(today(),d._man?manualWs(d._man):null);d._mday=null;
+}
+/* the first time a plan becomes flexible, its template starts from what the automatic plan asks over the next seven days, so nobody starts from nothing */
+function manEnsure(d){
+  if(d._man)return;
+  const man={ws:WS(),tpl:[[],[],[],[],[],[],[]],wk:[]};
+  if(planHas(d)){
+    const p=Object.assign({surahs:d.surahs||[],ranges:d.ranges||[],cycle:d.cycle||1,weekStart:WS()},planStamp(d._prev,d,today(),weekOf(today())));
+    for(let i=0;i<7;i++){const dt=addDays(today(),i);man.tpl[parse(dt).getDay()]=cleanItems(planItems(clampStart(p,today()),dt))}
+  }
+  d._man=man;d._mw=weekOf(today(),man.ws);
+  d._cyc=planHas(d)&&(d.cycle||1)>1;   // the automatic plan spreads over several weeks and the template starts from its first one only
+}
+/* the lists are arrays on purpose (see planner.js): tpl = seven lists, wk = [{w, d:[seven entries, a list or null]}] */
+const manOwn=(d,dow)=>{const e=manualWeek(d._man,d._mw);return e&&Array.isArray(e.d)&&Array.isArray(e.d[dow])?e.d[dow]:null};
+const manList=(d,dow)=>(d._scope==="wk"&&manOwn(d,dow))||d._man.tpl[dow]||[];
+const manCustom=(d,dow)=>d._scope==="wk"&&!!manOwn(d,dow);
+function manSet(d,dow,list){
+  const m=d._man;list=cleanItems(list);
+  if(d._scope!=="wk"){m.tpl[dow]=list;return}
+  let e=manualWeek(m,d._mw);if(!e){e={w:d._mw,d:[null,null,null,null,null,null,null]};m.wk.push(e)}
+  e.d[dow]=list;
+}
+function manReset(d,dow){   // the day follows the template again; a week that follows it everywhere is dropped
+  const m=d._man,e=manualWeek(m,d._mw);if(!e)return;
+  e.d[dow]=null;if(e.d.every(x=>x===null))m.wk=m.wk.filter(x=>x!==e);
+}
+/* the section that chooses between the automatic and the flexible wird; `redraw` re-renders the page */
+function manualCard(d){
+  return '<section class="card"><h3>'+t("wm_t")+'</h3>'+seg("wMode",[["auto",t("wm_auto")],["manual",t("wm_man")]],d._mode)+'<p class="about">'+t(d._mode==="manual"?"wm_man_t":"wm_auto_t")+'</p>'+(d._mode==="manual"&&d._cyc?'<p class="msg err">'+t("wm_cyc_t")+'</p>':'')+'</section>'+
+    (d._mode==="manual"?'<section class="card" id="manBox"></section>':'');
+}
+function bindManual(d,redraw){
+  $("wMode").querySelectorAll("button").forEach(b=>b.onclick=()=>{if(d._mode===b.dataset.v)return;d._mode=b.dataset.v;if(d._mode==="manual")manEnsure(d);redraw()});
+  if(d._mode==="manual")drawMan(d);
+}
+function manRow(d,dow){
+  const list=manList(d,dow),cu=manCustom(d,dow),open=d._mday===dow;
+  return '<div class="mrow"><b>'+DAYS[L()][dow]+'</b>'+(cu?'<span class="chip">'+t("wm_custom")+'</span>':'')+'<button type="button" class="btn small" data-me="'+dow+'" aria-expanded="'+open+'">'+t(open?"done":"wm_edit")+'</button></div>'+
+    '<p class="mitems">'+(list.length?esc(list.map(manStr).join("، ")):'<span class="hint">'+t("wm_rest")+'</span>')+'</p>';
+}
+function drawMan(d){
+  const box=$("manBox");if(!box)return;
+  const m=d._man,ws=manualWs(m),wk=d._mw;
+  const head=seg("wScope",[["tpl",t("wm_tpl")],["wk",t("wm_wk")]],d._scope)+'<p class="about">'+t(d._scope==="tpl"?"wm_tpl_t":"wm_wk_t")+'</p>'+
+    (d._scope==="wk"?'<div class="weeknav"><button type="button" class="btn" id="wPrevW">'+t("prev")+'</button><span class="lbl"><b>'+nice(wk)+' – '+nice(addDays(wk,6))+'</b></span><button type="button" class="btn" id="wNextW">'+t("next")+'</button></div>':'');
+  box.innerHTML='<h3>'+t("wm_days")+'</h3>'+head+'<div class="mdays">'+[0,1,2,3,4,5,6].map(i=>{const dow=(ws+i)%7;return '<div class="mday'+(d._mday===dow?' open':'')+'" data-dow="'+dow+'">'+manRow(d,dow)+(d._mday===dow?'<div class="mpick" id="mPick"></div>':'')+'</div>'}).join("")+'</div>';
+  $("wScope").querySelectorAll("button").forEach(b=>b.onclick=()=>{d._scope=b.dataset.v;d._mday=null;if(d._scope==="wk")d._mw=weekOf(today(),ws);drawMan(d)});
+  if($("wPrevW")){$("wPrevW").onclick=()=>{d._mw=addDays(d._mw,-7);d._mday=null;drawMan(d)};$("wNextW").onclick=()=>{d._mw=addDays(d._mw,7);d._mday=null;drawMan(d)}}
+  box.querySelectorAll("[data-me]").forEach(b=>b.onclick=()=>{const dow=+b.dataset.me;d._mday=d._mday===dow?null:dow;drawMan(d)});
+  if(d._mday!=null)drawPick(d,d._mday);
+}
+function drawPick(d,dow){
+  const host=$("mPick");if(!host)return;
+  const whole=n=>manList(d,dow).some(it=>it[0]===n&&it[1]===1&&it[2]===S[n-1][2]);
+  host.innerHTML='<label class="field"><input id="mSearch" type="search" placeholder="'+t("search")+'" autocomplete="off"></label><span class="hint" id="mCount"></span>'+
+    '<div class="picker" id="mList">'+range(1,114).map(n=>'<label class="pk" data-q="'+esc(S[n-1][0]+" "+S[n-1][1].toLowerCase()+" "+n)+'"><input type="checkbox" value="'+n+'"'+(whole(n)?' checked':'')+'><span class="n">'+n+'</span><span class="q">'+esc(sName(n))+'</span><span class="a">'+S[n-1][2]+' '+t("ayah")+'</span></label>').join("")+'</div>'+
+    '<h3>'+t("ayat_pick")+'</h3><div class="newrow rangerow"><select class="sel" id="mrS" aria-label="'+t("new_surah")+'">'+surahOptions(0)+'</select><input id="mrF" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input id="mrT" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div>'+
+    '<div class="row"><button type="button" class="btn" id="mrAdd">'+t("ayat_add")+'</button><button type="button" class="btn" id="mRest">'+t("wm_clear")+'</button>'+(manCustom(d,dow)?'<button type="button" class="btn" id="mReset">'+t("wm_reset")+'</button>':'')+'<button type="button" class="btn primary" id="mDone">'+t("done")+'</button></div><p class="msg err" id="mrMsg"></p><div id="mrList"></div>';
+  const list=()=>manList(d,dow);
+  const paint=()=>{   // the row's summary, the count and the list of ayah ranges; the surah list itself is left as it is (its scroll and search stay)
+    const cur=list(),ranges=cur.filter(it=>!(it[1]===1&&it[2]===S[it[0]-1][2]));
+    $("mCount").textContent=t("selected",new Set(cur.map(it=>it[0])).size);
+    $("mrList").innerHTML=ranges.map(r=>'<div class="kidrow"><span class="t"><b>'+esc(sName(r[0]))+'</b><small>'+t("ayat_range",r[1],r[2])+'</small></span><button type="button" class="btn" data-mrm="'+r[0]+'">'+t("ayat_rm")+'</button></div>').join("");
+    $("mrList").querySelectorAll("[data-mrm]").forEach(b=>b.onclick=()=>{manSet(d,dow,list().filter(it=>!(it[0]===+b.dataset.mrm&&!(it[1]===1&&it[2]===S[it[0]-1][2]))));paint()});
+    const row=host.closest(".mday");row.querySelector(".mrow").outerHTML=manRow(d,dow).split('<p class="mitems">')[0];row.querySelector(".mitems").innerHTML=cur.length?esc(cur.map(manStr).join("، ")):'<span class="hint">'+t("wm_rest")+'</span>';
+    row.querySelector("[data-me]").onclick=()=>{d._mday=null;drawMan(d)};
+    if(manCustom(d,dow)&&!$("mReset")){const r=document.createElement("button");r.type="button";r.className="btn";r.id="mReset";r.textContent=t("wm_reset");$("mRest").after(r);bindReset()}
+    $("mList").querySelectorAll("input").forEach(c=>c.checked=whole(+c.value));
+  };
+  const bindReset=()=>{if($("mReset"))$("mReset").onclick=()=>{manReset(d,dow);drawMan(d)}};
+  paint();bindReset();
+  $("mList").addEventListener("change",e=>{const n=+e.target.value;if(!n)return;let cur=list().filter(it=>it[0]!==n);if(e.target.checked)cur.push([n,1,S[n-1][2]]);manSet(d,dow,cur);paint()});
+  $("mSearch").oninput=e=>{const q=e.target.value.trim().toLowerCase();$("mList").querySelectorAll(".pk").forEach(r=>r.hidden=!!q&&r.dataset.q.indexOf(q)<0)};
+  $("mrS").onchange=e=>{const n=+e.target.value;$("mrF").max=$("mrT").max=n?S[n-1][2]:"";$("mrMsg").textContent=""};
+  $("mrAdd").onclick=()=>{const n=+$("mrS").value,f=Math.round(+$("mrF").value),to=Math.round(+$("mrT").value),msg=$("mrMsg");msg.textContent="";
+    if(!n||!(f>=1)||!(to>=f)||to>S[n-1][2]){msg.textContent=t("ayat_bad",n?S[n-1][2]:286);return}
+    if(whole(n)){msg.textContent=t("ayat_whole");return}
+    manSet(d,dow,list().filter(it=>it[0]!==n).concat([[n,f,to]]));$("mrF").value=$("mrT").value="";paint()};
+  $("mRest").onclick=()=>{manSet(d,dow,[]);drawMan(d)};
+  $("mDone").onclick=()=>{d._mday=null;drawMan(d)};
+}
+/* The plan fields to save for a plan draft: the flexible plan, or the automatic one. `prev` is what is stored now. A flexible plan saves the surahs it
+   touches too (so everything that reads a plan keeps working) and no distribution; going back to automatic distributes from today and drops `manual`.
+   Returns null when a flexible plan has nothing chosen on any day. */
+function planFields(d,prev){
+  if(d._mode==="manual"){
+    const mp=manualPlan(d._man);if(!planHas(mp))return null;
+    return Object.assign(mp,manualStamp(prev,today()));
+  }
+  const out={surahs:d.surahs.slice().sort((a,b)=>a-b),ranges:(d.ranges||[]).map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d.cycle,...planStamp(prev,d,today(),weekOf(today()))};
+  if(isManual(prev))out.manual=null;
+  return out;
+}
+
 /* ================= kid editor ================= */
 function openEdit(id,self){
   const k=id?ST.kids[id]:null;
   draft=k?JSON.parse(JSON.stringify(k)):Object.assign({id:uid("k"),name:"",gender:"m",theme:"space",surahs:[],cycle:1,halaqaId:null,teacherUid:null,age:"",mode:null,self:false,look:0,skin:1,_new:true},self?{name:ST.profile.name||"",age:30,self:true}:{});
-  if(!draft.surahs)draft.surahs=[];if(!draft.ranges)draft.ranges=[];go("edit");
+  if(!draft.surahs)draft.surahs=[];if(!draft.ranges)draft.ranges=[];manInit(draft,k);go("edit");
 }
 function renderEdit(){
   applyTheme(null);const d=draft,h=halaqaOf(d),tp=!!teacherPlanOf(d),jn=ST.joins[d.id],live=ST.kids[d.id]||d,me=ST.user.uid,isOwner=!d.parentUid||d.parentUid===me;
@@ -840,7 +945,7 @@ function renderEdit(){
      jn&&jn.status==="rejected"?'<p class="msg err">'+t("join_rejected",esc(jn.name))+'</p><button type="button" class="btn" id="hCancelJoin" style="align-self:flex-start">'+t("close")+'</button>':
      jn&&jn.status==="expired"?'<p class="msg err">'+t("join_expired",esc(jn.name))+'</p><button type="button" class="btn" id="hCancelJoin" style="align-self:flex-start">'+t("close")+'</button>':
      '<div class="row"><input id="hCodeIn" class="codein" dir="ltr" maxlength="8" placeholder="'+t("halaqa_code")+'" autocomplete="off" value="'+esc(d._code||"")+'"><button type="button" class="btn primary" id="hJoin">'+t("join")+'</button></div>')+'<p class="msg" id="hMsg"></p></section>'+
-   (tp?'':planSection(d))+
+   (tp?'':manualCard(d)+(d._mode==="manual"?'':planSection(d)))+
    (d._new?'':coParentCard(live,me))+
    (d._new?'':'<section class="card"><h3>'+t("childdev")+'</h3><p class="about">'+t("childdev_t")+'</p><button type="button" class="btn" id="cdSet" style="align-self:flex-start">'+t("childdev_set",esc(d.name))+'</button></section>')+
    '<p class="msg err" id="eMsg"></p><div class="row"><button class="btn primary big" id="eSave">'+t("save")+'</button><button class="btn big" id="eCancel">'+t("cancel")+'</button>'+(d._new||!isOwner?'':'<button class="btn big" id="eDel" style="margin-inline-start:auto">'+t("del")+'</button>')+'</div>';
@@ -855,13 +960,13 @@ function renderEdit(){
   if($("ePal"))$("ePal").querySelectorAll(".pal").forEach(b=>b.onclick=()=>{d.palette=b.dataset.pal||null;$("ePal").querySelectorAll(".pal").forEach(x=>x.setAttribute("aria-pressed",String(x===b)))});
   if($("eLooks"))$("eLooks").querySelectorAll(".lk").forEach(b=>b.onclick=()=>{d.look=+b.dataset.lk;$("eLooks").querySelectorAll(".lk").forEach(x=>x.setAttribute("aria-pressed",String(x===b)))});
   if($("eSkin"))$("eSkin").querySelectorAll(".skin").forEach(b=>b.onclick=()=>{d.skin=+b.dataset.sk;renderEdit()});
-  if(!tp)bindPlan(d);
+  if(!tp){bindManual(d,renderEdit);if(d._mode!=="manual")bindPlan(d)}
   const leave=()=>{draft=null;if(ST.kids[d.id]||!kidsList().length)go(gateOk?"settings":"main");else{gateOk=false;go("main")}};
   $("eBack").onclick=leave;$("eCancel").onclick=leave;
   const hm=(m,ok)=>{$("hMsg").className="msg "+(ok?"ok":"err");$("hMsg").textContent=m};
   if($("hJoin"))$("hJoin").onclick=async()=>{const code=$("hCodeIn").value.trim().toUpperCase();if(!code)return;
     if(d._new||!ST.kids[d.id]){if(!d.name.trim()){hm(t("name_req"));return}await saveDraft(true)}
-    try{const r=await D.requestJoin(d.id,code);if(r.err){hm(t("notfound"));return}draft=Object.assign(JSON.parse(JSON.stringify(ST.kids[d.id]||d)),{_new:false});renderEdit();hm(t("join_sent",esc(r.name)),true)}catch(e){hm(t("join_err"))}};
+    try{const r=await D.requestJoin(d.id,code);if(r.err){hm(t("notfound"));return}draft=Object.assign(JSON.parse(JSON.stringify(ST.kids[d.id]||d)),{_new:false});manInit(draft,ST.kids[d.id]);renderEdit();hm(t("join_sent",esc(r.name)),true)}catch(e){hm(t("join_err"))}};
   if($("hCancelJoin"))$("hCancelJoin").onclick=async()=>{try{await D.cancelJoin(d.id);renderEdit()}catch(e){hm(t("err_generic"))}};
   bindCoParent(live,me,renderEdit);
   if($("hLeave"))$("hLeave").onclick=async()=>{try{await D.leaveHalaqa(d.id);d.halaqaId=null;d.teacherUid=null;renderEdit()}catch(e){hm(t("err_generic"))}};
@@ -892,10 +997,14 @@ function bindCoParent(k,me,redraw){
 async function saveDraft(quiet){
   const d=draft;d.name=(d.name||"").trim();const h=halaqaOf(d),tp=!!teacherPlanOf(d);
   if(!d.name){$("eMsg").textContent=t("name_req");return false}
-  if(!tp&&!planHas(d)&&!quiet){$("eMsg").textContent=t("surah_req");return false}
   const prev=ST.kids[d.id];
-  const st=planStamp(prev,d,today(),weekOf(today()));
-  const k={id:d.id,name:d.name,gender:d.gender,theme:d.theme,palette:d.palette||null,age:d.age===""?null:d.age,mode:d.mode||null,self:!!d.self,look:d.look||0,skin:d.skin==null?1:d.skin,gift:(d.gift||"").trim().slice(0,60),surahs:d.surahs.slice().sort((a,b)=>a-b),ranges:(d.ranges||[]).map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d.cycle,...st,weekStart:WS(),
+  // a flexible plan with nothing chosen on any day is not a plan: it needs a surah like the automatic one (a child with a teacher's plan, or an unfinished draft saved quietly, is let through as before)
+  if(!tp&&d._mode==="manual"&&!planHas(manualPlan(d._man))&&!quiet){$("eMsg").textContent=t("wm_need");return false}
+  if(!tp&&d._mode!=="manual"&&!planHas(d)&&!quiet){$("eMsg").textContent=t("surah_req");return false}
+  // the plan fields: a child that follows its teacher's plan, or a flexible draft with nothing in it, keeps the automatic fields as before
+  const pf=tp&&isManual(prev)?Object.assign({surahs:prev.surahs||[],ranges:prev.ranges||[],cycle:1,manual:prev.manual},manualStamp(prev,today())):   // the teacher's plan is the one followed: the child's own flexible plan is left as it is
+    !tp&&d._mode==="manual"&&planHas(manualPlan(d._man))?planFields(d,prev):planFields(Object.assign({},d,{_mode:"auto"}),prev);
+  const k={id:d.id,name:d.name,gender:d.gender,theme:d.theme,palette:d.palette||null,age:d.age===""?null:d.age,mode:d.mode||null,self:!!d.self,look:d.look||0,skin:d.skin==null?1:d.skin,gift:(d.gift||"").trim().slice(0,60),...pf,weekStart:WS(),
     created:prev&&prev.created||Date.now(),halaqaId:prev?prev.halaqaId||null:null,teacherUid:prev?prev.teacherUid||null:null};
   await D.saveKid(k);d._new=false;return true;
 }
@@ -908,6 +1017,7 @@ function openHEdit(id){
   draft._usePlan=planHas(draft.plan);
   draft._p=draft.plan?JSON.parse(JSON.stringify(draft.plan)):{surahs:[],ranges:[],cycle:1};
   if(!draft._p.ranges)draft._p.ranges=[];
+  manInit(draft._p,draft.plan);
   go("hedit");
 }
 function renderHEdit(){
@@ -915,17 +1025,18 @@ function renderHEdit(){
   app.innerHTML='<div class="topbar"><span class="brand">'+LOGO+t(d._new?"new_halaqa":"hsettings")+'</span><button class="iconbtn" id="eBack" aria-label="'+t("cancel")+'">'+ICON_BACK+'</button></div>'+
    '<section class="card"><label class="field"><span class="sec-t">'+t("halaqa_name")+'</span><input id="hName" autocomplete="off" maxlength="40" value="'+esc(d.name)+'"></label><label class="field"><span class="sec-t">'+t("teacher_name")+'</span><input id="hTName" autocomplete="off" maxlength="40" value="'+esc(d.teacherName||"")+'"></label>'+(d.code?'<span class="hint">'+t("halaqa_code")+': <span class="codechip" dir="ltr">'+esc(d.code)+'</span></span>':'')+'</section>'+
    '<section class="card"><h2>'+t("plan")+'</h2><p class="about">'+t("plan_t")+'</p>'+seg("usePlan",[["0",t("plan_none")],["1",t("plan")]],d._usePlan?"1":"0")+'</section>'+
-   (d._usePlan?planSection(d._p):'')+
+   (d._usePlan?manualCard(d._p)+(d._p._mode==="manual"?'':planSection(d._p)):'')+
    '<p class="msg err" id="eMsg"></p><div class="row"><button class="btn primary big" id="eSave">'+t("save")+'</button><button class="btn big" id="eCancel">'+t("cancel")+'</button>'+(d._new?'':'<button class="btn big" id="eDel" style="margin-inline-start:auto">'+t("del_h")+'</button>')+'</div>';
   $("hName").oninput=e=>{d.name=e.target.value};$("hTName").oninput=e=>{d.teacherName=e.target.value};
   $("usePlan").querySelectorAll("button").forEach(b=>b.onclick=()=>{d._usePlan=b.dataset.v==="1";renderHEdit()});
-  if(d._usePlan)bindPlan(d._p);
+  if(d._usePlan){bindManual(d._p,renderHEdit);if(d._p._mode!=="manual")bindPlan(d._p)}
   const leave=()=>{const id=d.id,isNew=d._new;draft=null;if(!isNew&&ST.halaqas[id])go("halaqa",{hid:id});else go(gateOk?"settings":"main")};
   $("eBack").onclick=leave;$("eCancel").onclick=leave;
   $("eSave").onclick=async()=>{d.name=d.name.trim();if(!d.name){$("eMsg").textContent=t("name_req");return}
-    if(d._usePlan&&!planHas(d._p)){$("eMsg").textContent=t("surah_req");return}
+    const pf=d._usePlan?planFields(d._p,d.plan):null;
+    if(d._usePlan&&(!pf||!planHas(pf))){$("eMsg").textContent=t(d._p._mode==="manual"?"wm_need":"surah_req");return}
     $("eSave").disabled=true;
-    try{const prev=d.plan,np=d._usePlan?{surahs:d._p.surahs.slice().sort((a,b)=>a-b),ranges:d._p.ranges.map(r=>r.slice()).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cycle:d._p.cycle,...planStamp(prev,d._p,today(),weekOf(today())),weekStart:WS()}:null;
+    try{const np=d._usePlan?{...pf,weekStart:WS()}:null;
       const base={id:d.id,name:d.name,teacherName:(d.teacherName||"").trim(),plan:np,created:d.created||Date.now()};
       let code=d.code,tries=0;
       for(;;){

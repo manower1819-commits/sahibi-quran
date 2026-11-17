@@ -26,10 +26,32 @@ const dow=s=>new Date(s+"T00:00:00Z").getUTCDay();
 const wsOf=u=>u.weekStart==null||u.weekStart===""?((u.lang||"ar")==="en"?0:6):+u.weekStart;
 /* The weekday (0 = Sunday) a plan's weeks begin on: the weekday of its start for the in-order distribution (algo 2), otherwise the account's own setting.
    The same rule as planWeekStart in src/planner.js (test/reminders.test.js checks that they agree). */
-const planWeekStart=(p,fallback)=>{if(p&&p.algo===2&&typeof p.start==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(p.start)){const d=new Date(p.start+"T00:00:00Z");if(!isNaN(d)&&d.toISOString().slice(0,10)===p.start)return d.getUTCDay()}return fallback};
+const planWeekStart=(p,fallback)=>{if(isManual(p))return manualWs(p.manual);if(p&&p.algo===2&&typeof p.start==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(p.start)){const d=new Date(p.start+"T00:00:00Z");if(!isNaN(d)&&d.toISOString().slice(0,10)===p.start)return d.getUTCDay()}return fallback};
 /* true on the first day of a new week of this plan, and only when a whole week has gone by since the plan started (a plan saved today has nothing to report today) */
 const weekBeginsToday=(p,fallback,d)=>dow(d)===planWeekStart(p,fallback)&&!(planWeekStart(p,-1)!==-1&&p.start>=d);
 const planHas=p=>!!p&&((p.surahs||[]).length>0||(p.ranges||[]).length>0);
+/* A flexible plan (plan.manual, see manualItems in src/planner.js) asks nothing on a rest day, so there is nothing to remind about that day.
+   The same lookup as manualItems, reduced to "is anything asked" (test/reminders.test.js checks that they agree). */
+const hasItem=list=>Array.isArray(list)&&list.some(it=>Array.isArray(it)&&Number.isInteger(+it[0])&&+it[0]>=1&&+it[0]<=114&&+it[1]>=1&&+it[2]>=+it[1]);
+/* Firestore holds an array inside an array as {_a:[...]} (src/codec.js), and this job reads documents as they are stored, so a plan's manual part is decoded
+   before it is read (the same rule as decode in src/codec.js; test/reminders.test.js passes the encoded form). */
+const plainO=v=>v&&typeof v==="object"&&(Object.getPrototypeOf(v)===Object.prototype||Object.getPrototypeOf(v)===null);
+const dec=v=>{if(Array.isArray(v))return v.map(dec);if(plainO(v)){const ks=Object.keys(v);if(ks.length===1&&ks[0]==="_a"&&Array.isArray(v._a))return dec(v._a);return Object.fromEntries(ks.map(k=>[k,dec(v[k])]))}return v};
+/* a day document that carries a wird of its own (items): a day with items: [] is only the record of a day that had no wird */
+const dayItems=snap=>snap&&snap.exists&&Array.isArray(snap.data().items)?snap.data().items:null;
+/* A rest day, as the app shows it: only for a flexible plan. A day that carries a list of its own (items) is what it says, so an empty one is a rest day
+   (the app freezes planFor into items when anything is written that day); a day without one follows the plan. An automatic plan never has a rest day here. */
+const restDay=(p,snap,date)=>{if(!isManual(p))return false;const it=dayItems(snap);return it?it.length===0:manualRest(p,date)};
+const planOrNull=async(kd,id,cache)=>{try{return await planOfKid(kd,id,cache)}catch(e){return null}};   // a failed read of the class must not stop this parent's reminder
+const isManual=p=>!!(p&&p.manual&&typeof p.manual==="object"&&!Array.isArray(p.manual));
+const manualWs=m=>Number.isInteger(m&&m.ws)&&m.ws>=0&&m.ws<=6?m.ws:6;
+const manualRest=(p,date)=>{
+  if(!isManual(p))return false;
+  const m=dec(p.manual),k=dow(date),key=addD(date,-((k-manualWs(m)+7)%7));
+  let e;(Array.isArray(m.wk)?m.wk:[]).forEach(x=>{if(x&&typeof x==="object"&&x.w===key)e=x});   // the last entry of a repeated date, as manualWeek in planner.js
+  const own=e&&Array.isArray(e.d)?e.d[k]:null;
+  return !hasItem(Array.isArray(own)?own:Array.isArray(m.tpl)?m.tpl[k]:null);
+};
 /* the plan a child follows: the teacher's plan for that student, else the class plan, else the child's own (as effPlan in src/main.js) */
 async function planOfKid(kd,kidId,cache){
   if(!kd.halaqaId)return kd;
@@ -79,6 +101,7 @@ async function main(){
   // one account or queue entry with bad values (a non-numeric offset, tokens that are not a list...) must not stop everyone else's reminders;
   // log only what and which id, never the values or the tokens
   const skip=(what,id,e)=>{skipped++;console.error("skipped",what,id,(e&&(e.code||e.name))||"error")};
+  const remCache=new Map();   // halaqa documents already read this run (planOfKid)
   // 1) parent reminders
   const parents=await db.collection("users").where("remindAt","!=",null).get();
   for(const p of parents.docs){try{
@@ -87,6 +110,7 @@ async function main(){
     for(const k of kids){
       const kd=k.data(),day=await k.ref.collection("days").doc(d).get();
       if(day.exists&&(day.data().stars||0)>0)continue;
+      if(restDay(await planOrNull(kd,k.id,remCache),day,d))continue;   // a rest day of a flexible plan
       n+=await send([{ref:p.ref,tokens:u.tokens}].concat(p.id===kd.parentUid?[{ref:k.ref,tokens:kd.tokens}]:[]),tx(lang,"rem_t"),tx(lang,"rem_b",kd.name||""));
     }
     await p.ref.update({lastRemind:d});
@@ -99,9 +123,12 @@ async function main(){
     for(const h of hs.docs){
       const st=await db.collection("kids").where("teacherUid","==",t.id).where("halaqaId","==",h.id).get();
       if(st.empty)continue;
-      const missing=[];let done=0;
-      for(const k of st.docs){const x=await k.ref.collection("days").doc(d).get();if(x.exists&&(x.data().stars||0)>0)done++;else missing.push(k.data().name||"")}
-      const body=missing.length?tx(lang,"sum_b",done,st.size,missing.join(lang==="ar"?"، ":", ")):tx(lang,"sum_all");
+      const missing=[];let done=0,rest=0;
+      for(const k of st.docs){const x=await k.ref.collection("days").doc(d).get();if(x.exists&&(x.data().stars||0)>0)done++;
+        else if(restDay(await planOrNull(k.data(),k.id,remCache),x,d))rest++;   // a rest day of a flexible plan: neither done nor missing
+        else missing.push(k.data().name||"")}
+      if(rest===st.size)continue;   // nobody in the class is asked anything today
+      const body=missing.length?tx(lang,"sum_b",done,st.size-rest,missing.join(lang==="ar"?"، ":", ")):tx(lang,"sum_all");
       n+=await send([{ref:t.ref,tokens:u.tokens}],tx(lang,"sum_t",h.data().name||""),body);
     }
     await t.ref.update({lastSummary:d});
@@ -151,5 +178,5 @@ async function main(){
 }
 // exit code 1 when messages were attempted and every attempt failed (the sending service is down); a few broken accounts leave the run green
 const shouldFail=r=>!!r&&r.attempts>0&&r.failed===r.attempts;
-module.exports={main,shouldFail,planWeekStart,weekBeginsToday,due,local,sumWeek,addD,dow,wsOf,kidsOfParent};
+module.exports={main,shouldFail,planWeekStart,weekBeginsToday,due,local,sumWeek,addD,dow,wsOf,kidsOfParent,manualRest};
 if(require.main===module)main().then(r=>{if(shouldFail(r)){console.error("every send attempt failed:",r.failed+"/"+r.attempts);process.exit(1)}process.exit(0)},e=>{console.error(e);process.exit(1)});

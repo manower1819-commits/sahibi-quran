@@ -54,6 +54,8 @@ export function planAdd(plan,n,f,t){
   return{surahs:[...whole].sort((a,b)=>a-b),ranges:rest};
 }
 export const planHas=p=>!!p&&((p.surahs&&p.surahs.length>0)||(p.ranges&&p.ranges.length>0));
+/* the stamp fields of a plan saved as flexible: no distribution; `start` only marks when the child began (kept if there was one) */
+export const manualStamp=(prev,today)=>({light:-1,algo:0,start:(prev&&typeof prev.start==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(prev.start)?prev.start:today)});
 export const planAyat=p=>planUnits(p).reduce((a,u)=>a+u[2]-u[1]+1,0);
 /* Plans saved before the in-order distribution carry no `algo` and keep the balanced, interleaved distribution below, exactly as it was.
    Plans saved from now on carry algo:2 and use binsPages. */
@@ -141,6 +143,7 @@ export const planChanged=(prev,next)=>!prev||planKey(prev)!==planKey(next);
    keepStart is for adding to a plan little by little (the "add to my review" prompt): a plan that already has the in-order distribution and
    keeps its cycle length keeps its start too, so the cycle goes on instead of going back to day 1 with every addition. */
 export function planStamp(prev,next,today,weekToday,keepStart){
+  if(isManual(prev))return{light:-1,algo:ALGO_PAGES,start:today};   // back to the automatic plan from a flexible one: distributed from today
   if(keepStart&&prev&&prev.algo===ALGO_PAGES&&prev.start&&prev.cycle===next.cycle)return{light:-1,algo:ALGO_PAGES,start:prev.start};
   if(planChanged(prev,next))return{light:-1,algo:ALGO_PAGES,start:today};
   const out={light:prev.algo===ALGO_PAGES||prev.light==null?-1:prev.light,start:prev.start||(prev.algo===ALGO_PAGES?today:weekToday)};
@@ -161,6 +164,7 @@ export function clampStart(p,today){
    week is the seven days from the weekday of its start (saved on a Wednesday: Wednesday to Tuesday). Any other plan, and a start that is not a
    valid date, use the account's own week-start setting (`fallbackWs`). The same rule is in jobs/reminders.js (test/reminders.test.js checks they agree). */
 export function planWeekStart(p,fallbackWs){
+  if(isManual(p))return manualWs(p.manual);   // a flexible plan's weeks begin on the weekday it was made flexible on (its week-of-its-own dates depend on it)
   if(p&&p.algo===ALGO_PAGES&&typeof p.start==="string"&&START_RE.test(p.start)){const d=parse(p.start);if(iso(d)===p.start)return d.getDay()}
   return fallbackWs;
 }
@@ -172,6 +176,8 @@ export const weekOfPlan=(p,s,fallbackWs)=>weekOfWs(s,planWeekStart(p,fallbackWs)
    its first gift on the days from Wednesday to the end of that week). A week wholly before the start has none, so no gift. */
 export function giftDays(plan,w){
   const out=[];for(let i=0;i<7;i++)out.push(addDays(w,i));
+  // a rest day is not asked for, and neither is a day before the plan began (a plan made on Wednesday does not wait for the Saturday before it)
+  if(isManual(plan))return out.filter(d=>manualItems(plan,d).length>0&&!(typeof plan.start==="string"&&START_RE.test(plan.start)&&d<plan.start));
   if(plan&&plan.algo===ALGO_PAGES&&typeof plan.start==="string"&&START_RE.test(plan.start))return out.filter(d=>d>=plan.start);
   return out;
 }
@@ -188,6 +194,7 @@ export function giftStats(plan,w,starsOf){
 /* The items of a plan on a date (before any per-day override stored by the app). */
 export function planItems(p,date){
   if(!planHas(p))return[];
+  if(isManual(p))return manualItems(p,date);
   const ws=p.weekStart==null?6:p.weekStart;
   if(p.algo===ALGO_PAGES){
     // counted from the day the plan was saved; before that day there is no wird. A missing or malformed start, or a cycle that is not
@@ -212,3 +219,69 @@ export function mergeItems(a,b){
 }
 export const itemAyat=items=>items.reduce((s,it)=>s+it[2]-it[1]+1,0);
 export const itemPages=items=>items.reduce((s,it)=>s+pgs(it[0],it[1],it[2]),0);
+
+/* ---------- flexible (manual) plan ----------
+   A plan that carries `manual` is not distributed by the app: whoever sets it (a parent, an adult for themselves, or the teacher) says what is
+   reviewed on each day of the week.
+     manual = { ws, tpl, wk }
+       ws  the weekday (0 = Sunday) the plan's weeks begin on, as the account's week start was when the plan was first made flexible
+       tpl the weekly template, repeated every week: seven lists, index = JS weekday (0 = Sunday): [[[surah, from, to], ...], ...]
+       wk  weeks of their own: [{w: "YYYY-MM-DD" (first day of the week), d: [seven entries]}]. An entry that is a list replaces the template's day
+           (an empty list is a rest day); an entry that is null follows the template.
+   Arrays, not maps, on purpose: the app writes to Firestore with merge, which merges maps key by key (a removed day or week would stay stored) but
+   replaces an array whole. A day with no items is a rest day: nothing is asked and the weekly gift does not wait for it.
+   The plan also keeps `surahs`/`ranges` = every surah the manual plan touches (manualPool), so everything that reads a plan's units (the juz ring,
+   "plan covers", the lists of surahs) keeps working. A manual plan never has algo 2; its weeks begin on `manual.ws`. */
+export const MANUAL_MAX_ITEMS=120;   // pieces in one day: 114 surahs and a few ayah ranges; more is not a real plan
+export const isManual=p=>!!(p&&p.manual&&typeof p.manual==="object"&&!Array.isArray(p.manual));
+export const manualWs=m=>Number.isInteger(m&&m.ws)&&m.ws>=0&&m.ws<=6?m.ws:6;
+/* a day's list cleaned: only real [surah,from,to] pieces inside the surah, overlapping or touching pieces merged, in mushaf order */
+export function cleanItems(list){
+  if(!Array.isArray(list))return[];
+  const ok=[];
+  list.slice(0,MANUAL_MAX_ITEMS).forEach(it=>{if(!Array.isArray(it))return;const n=+it[0],f=Math.round(+it[1]),t=Math.round(+it[2]);if(S[n-1]&&f>=1&&t>=f&&t<=S[n-1][2])ok.push([n,f,t])});
+  return mergeItems(ok,[]);
+}
+const validWeek=k=>typeof k==="string"&&START_RE.test(k)&&iso(parse(k))===k;
+/* the entry of a week of its own in a manual plan (the last one if a date is repeated), or undefined */
+export function manualWeek(m,wk){
+  const a=m&&Array.isArray(m.wk)?m.wk:[];let out;
+  a.forEach(e=>{if(e&&typeof e==="object"&&e.w===wk)out=e});
+  return out;
+}
+/* what a manual plan asks on a date (before any per-day override stored by the app) */
+export function manualItems(p,date){
+  if(!isManual(p)||typeof date!=="string"||!START_RE.test(date))return[];
+  const m=p.manual,dow=parse(date).getDay(),e=manualWeek(m,weekOfWs(date,manualWs(m)));
+  const own=e&&Array.isArray(e.d)?e.d[dow]:null;
+  return cleanItems(Array.isArray(own)?own:Array.isArray(m.tpl)?m.tpl[dow]:null);
+}
+/* every surah/range the manual plan touches, as plan.surahs / plan.ranges */
+export function manualPool(m){
+  let pool={surahs:[],ranges:[]};
+  const take=list=>cleanItems(list).forEach(([n,f,t])=>{pool=planAdd(pool,n,f,t)});
+  if(m&&typeof m==="object"){
+    (Array.isArray(m.tpl)?m.tpl:[]).slice(0,7).forEach(take);
+    (Array.isArray(m.wk)?m.wk:[]).forEach(e=>{if(e&&Array.isArray(e.d))e.d.slice(0,7).forEach(take)});
+  }
+  return pool;
+}
+export const MANUAL_MAX_WEEKS=120;
+/* the manual object as it is saved: a template of seven cleaned lists, and the weeks of their own with a valid first-day date (a repeated date keeps
+   the last entry; at most MANUAL_MAX_WEEKS, the latest ones), each of seven entries (a cleaned list, or null to follow the template); a week that
+   follows the template on every day is dropped. Never returns an undefined value (Firestore rejects those). */
+export function cleanManual(m){
+  const out={ws:manualWs(m),tpl:[0,1,2,3,4,5,6].map(i=>cleanItems(m&&Array.isArray(m.tpl)?m.tpl[i]:null)),wk:[]};
+  const by=new Map();
+  (m&&Array.isArray(m.wk)?m.wk:[]).forEach(e=>{
+    if(!e||typeof e!=="object"||!validWeek(e.w))return;
+    const d=[0,1,2,3,4,5,6].map(i=>Array.isArray(e.d)&&Array.isArray(e.d[i])?cleanItems(e.d[i]):null);
+    if(d.some(x=>x!==null))by.set(e.w,{w:e.w,d});else by.delete(e.w);
+  });
+  out.wk=[...by.values()].sort((a,b)=>a.w<b.w?-1:a.w>b.w?1:0).slice(-MANUAL_MAX_WEEKS);
+  return out;
+}
+/* the fields a plan is saved with when it is flexible (the stamp is manualStamp): the pool, one cycle, and the cleaned manual object */
+export const manualPlan=m=>{const c=cleanManual(m),pool=manualPool(c);return{surahs:pool.surahs,ranges:pool.ranges,cycle:1,manual:c}};
+/* a manual plan has something to ask on at least one day */
+export const manualHas=p=>isManual(p)&&planHas(p);
