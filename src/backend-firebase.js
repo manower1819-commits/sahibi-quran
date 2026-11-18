@@ -1,6 +1,6 @@
 import {initializeApp} from "firebase/app";
 import {getAuth,onAuthStateChanged,createUserWithEmailAndPassword,signInWithEmailAndPassword,signOut as fbSignOut,sendPasswordResetEmail,deleteUser} from "firebase/auth";
-import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,doc,collection,query,where,onSnapshot,setDoc,updateDoc,deleteDoc,getDoc,getDocs,arrayUnion,arrayRemove,deleteField,serverTimestamp,addDoc} from "firebase/firestore";
+import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,doc,collection,query,where,onSnapshot,setDoc,updateDoc,deleteDoc,getDoc,getDocFromServer,getDocs,arrayUnion,arrayRemove,deleteField,serverTimestamp,addDoc} from "firebase/firestore";
 import {getMessaging,getToken,deleteToken,isSupported} from "firebase/messaging";
 import {encode,decode} from "./codec.js";
 
@@ -92,6 +92,11 @@ export function createFirebaseBackend(cfg){
     saveKid(k){const d=clean(k);delete d.id;delete d.parentUids;delete d.parentNames;   // changed only by the invite, leave and remove commands: a save from an old copy must not undo them
       const ex=store.kids[k.id];d.parentUid=ex&&ex.parentUid?ex.parentUid:store.user.uid;store.kids[k.id]=Object.assign({},k,d);emit();subDays(k.id);return setDoc(doc(db,"kids",k.id),encode(d),{merge:true})},
     async deleteKid(id){const k=store.kids[id];
+      /* The child must really be deleted on the server. Offline, Firestore hides it from the screen at once while the delete only waits in a queue
+         (and is lost if the app's storage is cleared before the connection comes back, so the child returns). So ask the server first and, when it
+         cannot be reached, delete nothing and say so ("no internet"). There is no time limit on the deletes themselves: giving up half way would
+         leave the child without its days. */
+      try{await getDocFromServer(doc(db,"kids",id))}catch(e){if(e&&e.code==="unavailable")throw Object.assign(new Error("offline"),{code:"auth/network-request-failed"})}
       const ds=await getDocs(collection(db,"kids",id,"days"));await Promise.all(ds.docs.map(d=>deleteDoc(d.ref)));
       // a pending join request, and the unused invite with its record, would otherwise outlive the child
       if(k&&k.joinReq&&k.joinReq.hid)await deleteDoc(doc(db,"halaqas",k.joinReq.hid,"requests",id)).catch(()=>{});

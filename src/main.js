@@ -973,7 +973,9 @@ function renderEdit(){
   if($("cdSet"))$("cdSet").onclick=()=>{const before=prefs.child&&prefs.child.kid;(async()=>{if(before&&before!==d.id)await quick(D.disablePush({kidId:before}));prefs.child={uid:ST.user.uid,kid:d.id};savePrefs();gateOk=false;go("main")})()};
   $("eSave").onclick=async()=>{const ok=await saveDraft(false);if(ok){prefs.cur=d.id;savePrefs();draft=null;gateOk=false;go("main");scrollToday()}};
   let armed=false;if($("eDel"))$("eDel").onclick=async()=>{if(!armed){armed=true;$("eDel").className="btn warn big";$("eDel").textContent=t("del2");return}
-    await D.deleteKid(d.id);if(prefs.child&&prefs.child.kid===d.id)prefs.child=null;if(prefs.cur===d.id)prefs.cur=null;savePrefs();draft=null;go("settings")};
+    const bt=$("eDel");if(bt.disabled)return;bt.disabled=true;   // one delete at a time
+    try{await D.deleteKid(d.id)}catch(e){armed=false;bt.disabled=false;bt.className="btn big";bt.textContent=t("del");$("eMsg").textContent=I[L()][e&&e.code]?t(e.code):t("err_generic");return}   // not deleted (no connection): stay here and say so
+    if(prefs.child&&prefs.child.kid===d.id)prefs.child=null;if(prefs.cur===d.id)prefs.cur=null;savePrefs();draft=null;go("settings")};
 }
 /* co-parents: the owner invites another parent with a one-time code; a co-parent can do everything except delete the child */
 function coParentCard(k,me){
