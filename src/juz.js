@@ -10,5 +10,12 @@ export function juzCoverage(surahs,ranges){
   for(let s=1;s<=114;s++)for(let a=1;a<=S[s-1][2];a++){const j=juzOf(s,a);tot[j]++;if(set.has(s)||(rg[s]&&rg[s].some(r=>a>=r[1]&&a<=r[2])))got[j]++}
   return tot.map((t,i)=>({juz:i+1,total:t,got:got[i],frac:got[i]/t}));
 }
+// the [surah, from, to] pieces that make up juz j (1..30): the first and last surah of a juz may be cut in the middle
+export function juzItems(j){
+  const a=JUZ_START[j-1],b=j<30?JUZ_START[j]:[115,1],out=[];
+  if(!a)return out;
+  for(let s=a[0];s<=114&&s<=b[0];s++){const from=s===a[0]?a[1]:1,to=s===b[0]?b[1]-1:S[s-1][2];if(to>=from)out.push([s,from,to])}
+  return out;
+}
 // surahs that start inside a given juz (for juz badges)
 export function surahsOfJuz(j){const r=[];for(let s=1;s<=114;s++){if(juzOf(s,1)===j-1)r.push(s)}return r}
