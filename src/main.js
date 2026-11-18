@@ -1,5 +1,5 @@
 import {S} from "./surahs.js";
-import {pad,iso,parse,addDays,diffDays,weekOfWs,weekOfPlan,planStamp,clampStart,giftStats,planItems,planUnits,planHas,planAyat,planAdd,planCovers,mergeItems,pageSegments,itemPageList,itemAyat,itemPages,isManual,manualWs,manualWeek,manualPlan,manualStamp,cleanItems} from "./planner.js";
+import {pad,iso,parse,addDays,diffDays,weekOfWs,weekOfPlan,planStamp,clampStart,giftStats,planItems,planUnits,planHas,planAyat,planAdd,planCovers,planToggleJuz,itemsPlan,mergeItems,pageSegments,itemPageList,itemAyat,itemPages,isManual,manualWs,manualWeek,manualPlan,manualStamp,cleanItems} from "./planner.js";
 import {I,DAYS,DSHORT} from "./i18n.js";
 import {STAR,LOGO,THEMES,THEME_ORDER,giftSvg,ICON_GEAR,ICON_BACK} from "./themes.js";
 import {createFakeBackend} from "./backend-fake.js";
@@ -799,8 +799,13 @@ function renderSettings(){
 }
 
 /* ================= plan picker (shared) ================= */
+const PRESETS={p30:range(78,114),p29:range(67,77),p2930:range(67,114),pall:range(1,114)};   // quick picks (pnone clears)
+const presetOn=(d,p)=>!!PRESETS[p]&&PRESETS[p].every(n=>planCovers(d,n,1,S[n-1][2]));   // a quick pick shows as pressed while all its surahs are chosen
+/* the 30 juz buttons: filled = the whole juz is chosen, dotted = part of it (a juz can cut a surah in the middle), plain = none. `plan` = {surahs, ranges} */
+const juzGrid=(id,plan)=>'<h3>'+t("juz_pick")+'</h3><p class="about">'+t("juz_pick_t")+'</p><div class="juzgrid" id="'+id+'">'+juzCoverage(plan.surahs,plan.ranges).map(c=>'<button type="button" class="jz'+(c.got>0&&c.frac<1?' part':'')+'" data-j="'+c.juz+'" aria-pressed="'+(c.frac>=1)+'" aria-label="'+t("juz_n",c.juz)+'">'+c.juz+'</button>').join("")+'</div>';
+const juzPaint=(id,plan)=>{const cov=juzCoverage(plan.surahs,plan.ranges);$(id).querySelectorAll(".jz").forEach(b=>{const c=cov[+b.dataset.j-1];b.setAttribute("aria-pressed",String(c.frac>=1));b.classList.toggle("part",c.got>0&&c.frac<1)})};
 function planSection(d){
-  return '<section class="card"><h3>'+t("memorized")+'</h3><div class="row"><span class="hint">'+t("presets")+'</span>'+["p30","p29","p2930","pall","pnone"].map(p=>'<button type="button" class="btn" data-p="'+p+'">'+t(p)+'</button>').join("")+'</div>'+
+  return '<section class="card"><h3>'+t("memorized")+'</h3><div class="row"><span class="hint">'+t("presets")+'</span>'+["p30","p29","p2930","pall","pnone"].map(p=>'<button type="button" class="btn'+(presetOn(d,p)?' on':'')+'" data-p="'+p+'">'+t(p)+'</button>').join("")+'</div>'+juzGrid("eJuz",d)+
    '<label class="field"><input id="eSearch" type="search" placeholder="'+t("search")+'" autocomplete="off"></label><span class="hint" id="eCount"></span><div class="picker" id="ePick">'+
    range(1,114).map(n=>'<label class="pk" data-q="'+esc(S[n-1][0]+" "+S[n-1][1].toLowerCase()+" "+n)+'"><input type="checkbox" value="'+n+'"'+(d.surahs.indexOf(n)>-1?' checked':'')+'><span class="n">'+n+'</span><span class="q">'+esc(sName(n))+'</span><span class="a">'+S[n-1][2]+' '+t("ayah")+'</span></label>').join("")+'</div></section>'+
    '<section class="card"><h3>'+t("ayat_pick")+'</h3><p class="about">'+t("ayat_pick_t")+'</p><div class="newrow rangerow"><select class="sel" id="rS" aria-label="'+t("new_surah")+'">'+surahOptions(0)+'</select><input id="rF" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input id="rT" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div><div class="row"><button type="button" class="btn" id="rAdd">'+t("ayat_add")+'</button></div><p class="msg err" id="rMsg"></p><div id="rList"></div></section>'+
@@ -810,17 +815,18 @@ function bindPlan(d){
   if(!d.ranges)d.ranges=[];
   const drawRanges=()=>{d.ranges.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);$("rList").innerHTML=d.ranges.map((r,ix)=>'<div class="kidrow"><span class="t"><b>'+esc(sName(r[0]))+'</b><small>'+t("ayat_range",r[1],r[2])+'</small></span><button type="button" class="btn" data-rm="'+ix+'">'+t("ayat_rm")+'</button></div>').join("");
     $("rList").querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{d.ranges.splice(+b.dataset.rm,1);drawRanges();upd()})};
-  const upd=()=>{$("eCount").textContent=t("selected",planSurahCount(d));const tot=planAyat(d),caps=7*d.cycle;$("eEst").innerHTML=planHas(d)?t("est",Math.round(tot/caps),cycleLbl(d.cycle)):t("est0")};upd();drawRanges();
+  const upd=()=>{app.querySelectorAll("[data-p]").forEach(b=>{if(PRESETS[b.dataset.p])b.classList.toggle("on",presetOn(d,b.dataset.p))});juzPaint("eJuz",d);$("eCount").textContent=t("selected",planSurahCount(d));const tot=planAyat(d),caps=7*d.cycle;$("eEst").innerHTML=planHas(d)?t("est",Math.round(tot/caps),cycleLbl(d.cycle)):t("est0")};upd();drawRanges();
   $("rS").onchange=e=>{const n=+e.target.value;$("rF").max=$("rT").max=n?S[n-1][2]:"";$("rMsg").textContent=""};
   $("rAdd").onclick=()=>{const n=+$("rS").value,f=Math.round(+$("rF").value),to=Math.round(+$("rT").value),msg=$("rMsg");msg.textContent="";
     if(!n||!(f>=1)||!(to>=f)||to>S[n-1][2]){msg.textContent=t("ayat_bad",n?S[n-1][2]:286);return}
     if(d.surahs.indexOf(n)>-1){msg.textContent=t("ayat_whole");return}
-    d.ranges=d.ranges.filter(r=>r[0]!==n);d.ranges.push([n,f,to]);$("rF").value=$("rT").value="";drawRanges();upd()};
+    const r=planAdd(d,n,f,to);d.surahs=r.surahs;d.ranges=r.ranges;$("rF").value=$("rT").value="";sync()};   // joined with the surah's other ranges (the juz buttons can leave several)
   const segB=(id,f)=>$(id).querySelectorAll("button").forEach(b=>b.onclick=()=>{d[f]=+b.dataset.v;$(id).querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));upd()});
   segB("eCycle","cycle");
   const sync=()=>{$("ePick").querySelectorAll("input").forEach(c=>c.checked=d.surahs.indexOf(+c.value)>-1);drawRanges();upd()};
   $("ePick").addEventListener("change",e=>{const n=+e.target.value;if(e.target.checked){if(d.surahs.indexOf(n)<0)d.surahs.push(n);d.ranges=d.ranges.filter(r=>r[0]!==n);drawRanges()}else d.surahs=d.surahs.filter(x=>x!==n);upd()});
   app.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{const p=b.dataset.p,add=p==="p30"?range(78,114):p==="p29"?range(67,77):p==="p2930"?range(67,114):p==="pall"?range(1,114):null;if(!add){d.surahs=[];d.ranges=[]}else add.forEach(n=>{if(d.surahs.indexOf(n)<0)d.surahs.push(n);d.ranges=d.ranges.filter(r=>r[0]!==n)});d.surahs.sort((a,b)=>a-b);sync()});
+  $("eJuz").onclick=e=>{const b=e.target.closest(".jz");if(!b)return;const p=planToggleJuz(d,+b.dataset.j);d.surahs=p.surahs;d.ranges=p.ranges;sync()};
   $("eSearch").oninput=e=>{const q=e.target.value.trim().toLowerCase();$("ePick").querySelectorAll(".pk").forEach(r=>r.hidden=!!q&&r.dataset.q.indexOf(q)<0)};
 }
 
@@ -886,7 +892,7 @@ function drawMan(d){
 function drawPick(d,dow){
   const host=$("mPick");if(!host)return;
   const whole=n=>manList(d,dow).some(it=>it[0]===n&&it[1]===1&&it[2]===S[n-1][2]);
-  host.innerHTML='<label class="field"><input id="mSearch" type="search" placeholder="'+t("search")+'" autocomplete="off"></label><span class="hint" id="mCount"></span>'+
+  host.innerHTML=juzGrid("mJuz",itemsPlan(manList(d,dow)))+'<label class="field"><input id="mSearch" type="search" placeholder="'+t("search")+'" autocomplete="off"></label><span class="hint" id="mCount"></span>'+
     '<div class="picker" id="mList">'+range(1,114).map(n=>'<label class="pk" data-q="'+esc(S[n-1][0]+" "+S[n-1][1].toLowerCase()+" "+n)+'"><input type="checkbox" value="'+n+'"'+(whole(n)?' checked':'')+'><span class="n">'+n+'</span><span class="q">'+esc(sName(n))+'</span><span class="a">'+S[n-1][2]+' '+t("ayah")+'</span></label>').join("")+'</div>'+
     '<h3>'+t("ayat_pick")+'</h3><div class="newrow rangerow"><select class="sel" id="mrS" aria-label="'+t("new_surah")+'">'+surahOptions(0)+'</select><input id="mrF" type="number" inputmode="numeric" min="1" placeholder="'+t("from_s")+'" aria-label="'+t("from")+'"><input id="mrT" type="number" inputmode="numeric" min="1" placeholder="'+t("to_s")+'" aria-label="'+t("to")+'"></div>'+
     '<div class="row"><button type="button" class="btn" id="mrAdd">'+t("ayat_add")+'</button><button type="button" class="btn" id="mRest">'+t("wm_clear")+'</button>'+(manCustom(d,dow)?'<button type="button" class="btn" id="mReset">'+t("wm_reset")+'</button>':'')+'<button type="button" class="btn primary" id="mDone">'+t("done")+'</button></div><p class="msg err" id="mrMsg"></p><div id="mrList"></div>';
@@ -894,22 +900,24 @@ function drawPick(d,dow){
   const paint=()=>{   // the row's summary, the count and the list of ayah ranges; the surah list itself is left as it is (its scroll and search stay)
     const cur=list(),ranges=cur.filter(it=>!(it[1]===1&&it[2]===S[it[0]-1][2]));
     $("mCount").textContent=t("selected",new Set(cur.map(it=>it[0])).size);
-    $("mrList").innerHTML=ranges.map(r=>'<div class="kidrow"><span class="t"><b>'+esc(sName(r[0]))+'</b><small>'+t("ayat_range",r[1],r[2])+'</small></span><button type="button" class="btn" data-mrm="'+r[0]+'">'+t("ayat_rm")+'</button></div>').join("");
-    $("mrList").querySelectorAll("[data-mrm]").forEach(b=>b.onclick=()=>{manSet(d,dow,list().filter(it=>!(it[0]===+b.dataset.mrm&&!(it[1]===1&&it[2]===S[it[0]-1][2]))));paint()});
+    $("mrList").innerHTML=ranges.map(r=>'<div class="kidrow"><span class="t"><b>'+esc(sName(r[0]))+'</b><small>'+t("ayat_range",r[1],r[2])+'</small></span><button type="button" class="btn" data-mrm="'+r[0]+'-'+r[1]+'-'+r[2]+'">'+t("ayat_rm")+'</button></div>').join("");
+    $("mrList").querySelectorAll("[data-mrm]").forEach(b=>b.onclick=()=>{const x=b.dataset.mrm.split("-").map(Number);manSet(d,dow,list().filter(it=>!(it[0]===x[0]&&it[1]===x[1]&&it[2]===x[2])));paint()});
     const row=host.closest(".mday");row.querySelector(".mrow").outerHTML=manRow(d,dow).split('<p class="mitems">')[0];row.querySelector(".mitems").innerHTML=cur.length?esc(cur.map(manStr).join("، ")):'<span class="hint">'+t("wm_rest")+'</span>';
     row.querySelector("[data-me]").onclick=()=>{d._mday=null;drawMan(d)};
     if(manCustom(d,dow)&&!$("mReset")){const r=document.createElement("button");r.type="button";r.className="btn";r.id="mReset";r.textContent=t("wm_reset");$("mRest").after(r);bindReset()}
     $("mList").querySelectorAll("input").forEach(c=>c.checked=whole(+c.value));
+    juzPaint("mJuz",itemsPlan(cur));
   };
   const bindReset=()=>{if($("mReset"))$("mReset").onclick=()=>{manReset(d,dow);drawMan(d)}};
   paint();bindReset();
   $("mList").addEventListener("change",e=>{const n=+e.target.value;if(!n)return;let cur=list().filter(it=>it[0]!==n);if(e.target.checked)cur.push([n,1,S[n-1][2]]);manSet(d,dow,cur);paint()});
+  $("mJuz").onclick=e=>{const b=e.target.closest(".jz");if(!b)return;manSet(d,dow,planUnits(planToggleJuz(itemsPlan(list()),+b.dataset.j)));paint()};
   $("mSearch").oninput=e=>{const q=e.target.value.trim().toLowerCase();$("mList").querySelectorAll(".pk").forEach(r=>r.hidden=!!q&&r.dataset.q.indexOf(q)<0)};
   $("mrS").onchange=e=>{const n=+e.target.value;$("mrF").max=$("mrT").max=n?S[n-1][2]:"";$("mrMsg").textContent=""};
   $("mrAdd").onclick=()=>{const n=+$("mrS").value,f=Math.round(+$("mrF").value),to=Math.round(+$("mrT").value),msg=$("mrMsg");msg.textContent="";
     if(!n||!(f>=1)||!(to>=f)||to>S[n-1][2]){msg.textContent=t("ayat_bad",n?S[n-1][2]:286);return}
     if(whole(n)){msg.textContent=t("ayat_whole");return}
-    manSet(d,dow,list().filter(it=>it[0]!==n).concat([[n,f,to]]));$("mrF").value=$("mrT").value="";paint()};
+    manSet(d,dow,planUnits(planAdd(itemsPlan(list()),n,f,to)));$("mrF").value=$("mrT").value="";paint()};
   $("mRest").onclick=()=>{manSet(d,dow,[]);drawMan(d)};
   $("mDone").onclick=()=>{d._mday=null;drawMan(d)};
 }

@@ -2,6 +2,7 @@
    Kept out of main.js so it can be unit-tested (see test/planner.test.js and test/algo2.test.js). */
 import {S} from "./surahs.js";
 import {PAGE_START} from "./pages.js";
+import {juzItems} from "./juz.js";
 
 /* ---------- dates ---------- */
 export const pad=n=>(n<10?"0":"")+n;
@@ -52,6 +53,26 @@ export function planAdd(plan,n,f,t){
   }
   rest.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
   return{surahs:[...whole].sort((a,b)=>a-b),ranges:rest};
+}
+/* The plan's surahs/ranges after taking n:f-t out of it (a whole surah may fall apart into ranges). Does not change the input. */
+export function planRemove(plan,n,f,t){
+  const whole=new Set(plan.surahs||[]),rest=(plan.ranges||[]).filter(r=>r[0]!==n).map(r=>r.slice());
+  const mine=planUnits(plan).filter(u=>u[0]===n);whole.delete(n);
+  const keep=[];
+  mine.forEach(u=>{if(u[1]<f)keep.push([u[1],Math.min(u[2],f-1)]);if(u[2]>t)keep.push([Math.max(u[1],t+1),u[2]])});
+  if(keep.length===1&&keep[0][0]===1&&keep[0][1]===S[n-1][2])whole.add(n);
+  else keep.forEach(k=>rest.push([n,k[0],k[1]]));
+  rest.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+  return{surahs:[...whole].sort((a,b)=>a-b),ranges:rest};
+}
+/* a list of items [surah,from,to] as a plan ({surahs, ranges}) and back: planUnits(itemsPlan(list)) */
+export const itemsPlan=list=>{const surahs=[],ranges=[];(list||[]).forEach(it=>{if(!S[it[0]-1])return;if(it[1]===1&&it[2]===S[it[0]-1][2])surahs.push(it[0]);else ranges.push([it[0],it[1],it[2]])});return{surahs,ranges}};
+/* Pressing a juz (1..30): it is taken out when the plan already holds all of it, otherwise all of it is added. Returns the new {surahs, ranges}. */
+export function planToggleJuz(plan,j){
+  const items=juzItems(j),full=items.length>0&&items.every(([n,f,t])=>planCovers(plan,n,f,t));
+  let p={surahs:(plan.surahs||[]).slice(),ranges:(plan.ranges||[]).map(r=>r.slice())};
+  items.forEach(([n,f,t])=>{p=(full?planRemove:planAdd)(p,n,f,t)});
+  return p;
 }
 export const planHas=p=>!!p&&((p.surahs&&p.surahs.length>0)||(p.ranges&&p.ranges.length>0));
 /* the stamp fields of a plan saved as flexible: no distribution; `start` only marks when the child began (kept if there was one) */
